@@ -1,0 +1,30 @@
+# Python & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# Local SQLite & Encrypted Databases (Never commit local user data)
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Flet & Flutter Build Artifacts
+build/
+.flet/
+dist/
+*.apk
+*.aab
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

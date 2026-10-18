@@ -1,0 +1,3 @@
+# Lean Tech Stack Mandate (<25-35MB APK, <500ms Warm Resume)
+# Strictly NO pandas, numpy, scikit-learn, matplotlib, or plotly
+flet>=0.24.0
