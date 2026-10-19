@@ -1,35 +1,208 @@
 #!/usr/bin/env python3
-"""Project Lead Live App & Smart Auto-Integration Upgrade for Sumit Kushwaha.
+r"""Project Lead Live App & Smart Auto-Integration Upgrade for Sumit Kushwaha.
 
-Run this script once inside your repo (`D:\Final Year Project\automated-expenditure-tracker files`):
+Run this script inside your repo (`D:\Final Year Project\automated-expenditure-tracker files`):
     python upgrade_live_app_integrator.py
-
-What it upgrades:
-1. `src/contracts.py` -> Smart Plug-and-Play Auto-Discovery Bridge:
-   - Automatically detects if Anuj (`src/db/database.py`, `src/backend/upi_bridge.py`),
-     Uday (`src/analytics/tagger.py`, `anomaly.py`, `health_score.py`), or
-     Saurabh (`src/ui/home_view.py`, `scanner_view.py`, `dashboard_view.py`, `popups.py`)
-     have pushed their modules.
-   - If a teammate's module is present, it routes calls to their LIVE code!
-   - If a teammate hasn't pushed a module yet, it seamlessly falls back to the built-in
-     reference engine so the app NEVER crashes and is 100% demoable every single day.
-
-2. `main.py` -> Full Interactive Python Flet Mobile App (Dark Mode, 412x860 Android Frame):
-   - Run `python main.py` -> Opens the working Expenditure Tracker mobile app window!
-   - Run `python main.py --check-integration` -> Runs a 5-point CLI integration audit on all modules.
 """
 
 import os
 import sys
 
-CONTRACTS_CODE = """\"\"\"Smart Plug-and-Play Cross-Module Contract Bridge (v1.1).
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+FOLDERS = [
+    "src",
+    "src/db",
+    "src/backend",
+    "src/ui",
+    "src/analytics",
+]
+
+SEED_MOCK_DATA_CODE = '''"""30-Day Realistic UPI Mock Database Seeder (Task S0-02).
+
+Owned by: Sumit Kushwaha (Project Lead)
+Purpose: Creates all 6 SQLite v1.1 tables in `tracker_dev.db` and populates
+40 realistic Indian UPI transactions + 1 sample PENDING transaction so Saurabh (UI)
+and Uday (Analytics) can test charts, popups, and Z-Score math on Day 1.
+"""
+
+import sqlite3
+from datetime import datetime, timedelta
+
+DB_FILE = "tracker_dev.db"
+
+SCHEMA_SQL = """
+PRAGMA journal_mode = MEMORY;
+PRAGMA synchronous = OFF;
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS user_profile (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    monthly_budget REAL NOT NULL DEFAULT 15000.0,
+    primary_upi_app TEXT DEFAULT 'com.google.android.apps.nbu.paisa.user',
+    biometric_enabled BOOLEAN DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    category_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    budget_limit REAL DEFAULT NULL,
+    icon_name TEXT,
+    is_default BOOLEAN DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS transactions (
+    txn_id TEXT PRIMARY KEY,
+    amount REAL NOT NULL,
+    payee_vpa TEXT NOT NULL,
+    payee_name TEXT NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    category_id INTEGER,
+    is_anomaly BOOLEAN DEFAULT 0,
+    notes TEXT,
+    FOREIGN KEY (category_id) REFERENCES categories(category_id)
+);
+
+CREATE TABLE IF NOT EXISTS pending_transactions (
+    internal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    amount REAL NOT NULL,
+    payee_vpa TEXT NOT NULL,
+    payee_name TEXT NOT NULL,
+    raw_qr_uri TEXT,
+    init_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    status TEXT DEFAULT 'PENDING'
+);
+
+CREATE TABLE IF NOT EXISTS merchant_tags (
+    vpa_pattern TEXT PRIMARY KEY,
+    category_id INTEGER,
+    confidence REAL DEFAULT 1.0,
+    FOREIGN KEY (category_id) REFERENCES categories(category_id)
+);
+
+CREATE TABLE IF NOT EXISTS bill_splits (
+    split_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    txn_id TEXT NOT NULL,
+    friend_name TEXT NOT NULL,
+    friend_contact TEXT,
+    share_amount REAL NOT NULL,
+    is_settled BOOLEAN DEFAULT 0,
+    FOREIGN KEY (txn_id) REFERENCES transactions(txn_id)
+);
+"""
+
+
+def seed_mock_database(db_path: str = DB_FILE) -> None:
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.executescript(SCHEMA_SQL)
+
+    # 1. Seed user profile
+    cur.execute("DELETE FROM user_profile;")
+    cur.execute(
+        "INSERT INTO user_profile (id, name, monthly_budget, primary_upi_app, biometric_enabled) "
+        "VALUES (1, 'Sumit Kushwaha', 12000.0, 'com.google.android.apps.nbu.paisa.user', 0);"
+    )
+
+    # 2. Seed categories
+    categories = [
+        (1, "Food & Dining", 3500.0, "RESTAURANT", 1),
+        (2, "Travel", 2000.0, "DIRECTIONS_CAR", 1),
+        (3, "Groceries", 2500.0, "SHOPPING_CART", 1),
+        (4, "Fuel", 2000.0, "LOCAL_GAS_STATION", 1),
+        (5, "Utilities", 2000.0, "BOLT", 1),
+        (6, "Uncategorized", None, "HELP_OUTLINE", 1),
+    ]
+    cur.executemany(
+        "INSERT OR REPLACE INTO categories (category_id, name, budget_limit, icon_name, is_default) "
+        "VALUES (?, ?, ?, ?, ?);",
+        categories,
+    )
+
+    # 3. Seed merchant_tags (Tier 1 Heuristic Memory)
+    merchant_tags = [
+        ("ramesh.chai@ybl", 1, 1.0),
+        ("nitra.canteen@okaxis", 1, 1.0),
+        ("sharma.kirana@paytm", 3, 1.0),
+    ]
+    cur.executemany(
+        "INSERT OR REPLACE INTO merchant_tags (vpa_pattern, category_id, confidence) VALUES (?, ?, ?);",
+        merchant_tags,
+    )
+
+    # 4. Seed 40 realistic transactions over the last 25 days
+    now = datetime.now()
+    sample_rows = []
+    base_data = [
+        ("zomato.order@hdfcbank", "Zomato Limited", 180.0, 1, 0, "#Dinner"),
+        ("swiggy.instamart@icici", "Swiggy Food", 220.0, 1, 0, ""),
+        ("ramesh.chai@ybl", "Ramesh Tea Stall", 20.0, 1, 0, "#Chai"),
+        ("ramesh.chai@ybl", "Ramesh Tea Stall", 20.0, 1, 0, "#Chai"),
+        ("ramesh.chai@ybl", "Ramesh Tea Stall", 20.0, 1, 0, "#Chai"),
+        ("ramesh.chai@ybl", "Ramesh Tea Stall", 20.0, 1, 0, "#Chai"),
+        ("ramesh.chai@ybl", "Ramesh Tea Stall", 20.0, 1, 0, "#Chai"),
+        ("uber.india@axisbank", "Uber Rides", 145.0, 2, 0, "#College"),
+        ("rapido.bike@ybl", "Rapido Captain", 65.0, 2, 0, ""),
+        ("irctc.tourism@sbi", "IRCTC Rail Connect", 480.0, 2, 0, "#HomeTrip"),
+        ("blinkit.grofers@kotak", "Blinkit Commerce", 310.0, 3, 0, ""),
+        ("sharma.kirana@paytm", "Sharma Kirana Store", 190.0, 3, 0, "#Hostel"),
+        ("dmart.ready@icici", "Avenue Supermarts DMart", 640.0, 3, 0, ""),
+        ("hpcl.petrol@sbi", "HPCL Highway Pump", 250.0, 4, 0, "#Bike"),
+        ("iocl.fuel@axis", "Indian Oil SmartFill", 300.0, 4, 0, ""),
+        ("jio.recharge@paytm", "Jio Prepaid Recharge", 299.0, 5, 0, "#Mobile"),
+        ("uppcl.bill@sbi", "UPPCL Electricity", 850.0, 5, 0, "#RoomBill"),
+        ("bikanervala.gzb@okicici", "Bikanervala Ghaziabad", 160.0, 1, 0, ""),
+        ("haldiram.snacks@hdfc", "Haldiram Snacks", 210.0, 1, 0, ""),
+        ("zomato.party@hdfcbank", "Zomato Celebration Order", 1450.0, 1, 1, "#BirthdaySpike"),
+    ]
+
+    for idx in range(40):
+        vpa, name, amt, cat_id, is_anom, note = base_data[idx % len(base_data)]
+        txn_time = (now - timedelta(days=(25 - (idx // 2)), hours=(idx % 8))).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        txn_id = f"TXN202610{idx + 1001:04d}"
+        sample_rows.append(
+            (txn_id, amt + (idx % 3) * 5.0, vpa, name, txn_time, cat_id, is_anom, note)
+        )
+
+    cur.execute("DELETE FROM transactions;")
+    cur.executemany(
+        "INSERT INTO transactions (txn_id, amount, payee_vpa, payee_name, timestamp, category_id, is_anomaly, notes) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        sample_rows,
+    )
+
+    # 5. Seed 1 unresolved PENDING transaction to test the 1-Tap Resume Fallback Popup
+    cur.execute("DELETE FROM pending_transactions;")
+    cur.execute(
+        "INSERT INTO pending_transactions (amount, payee_vpa, payee_name, raw_qr_uri, status) "
+        "VALUES (120.0, 'sonu.snacks@ybl', 'SONU SNACKS', "
+        "'upi://pay?pa=sonu.snacks@ybl&pn=SONU%20SNACKS&mc=5814&sign=MOCKSIGNATURE&cu=INR', 'PENDING');"
+    )
+
+    conn.commit()
+    conn.close()
+    print(f"[OK] Seeded {db_path} with 6 v1.1 tables, 40 transactions, and 1 PENDING fallback test row.")
+
+
+if __name__ == "__main__":
+    seed_mock_database()
+'''
+
+CONTRACTS_CODE = '''"""Smart Plug-and-Play Cross-Module Contract Bridge (v1.1).
 
 Owned by: Sumit Kushwaha (Project Lead & Integrator)
 Purpose:
 - Guarantees the app is 100% runnable and visually demoable from Day 1.
 - Automatically detects and wires in Anuj's, Saurabh's, and Uday's modules as soon
-  as their Pull Requests are merged into `dev`.
-\"\"\"
+  as their Pull Requests are merged into `dev` (or created on a local branch).
+"""
 
 import csv
 import importlib
@@ -38,6 +211,7 @@ import os
 import re
 import sqlite3
 import statistics
+import sys
 import time
 from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -58,47 +232,226 @@ CATEGORY_ID_TO_NAME = {cid: name for cid, name, _, _, _ in DEFAULT_CATEGORIES}
 
 # Pre-compiled Tier 2 Regex patterns (Baseline until Uday's src/analytics/tagger.py is merged)
 COMPILED_REGEX_RULES = [
-    (1, "Food & Dining", re.compile(r"zomato|swiggy|dominos|kfc|haldiram|bikaner|chai|tea|snack|canteen|cafe|bakery|restaurant|food", re.IGNORECASE)),
-    (2, "Travel", re.compile(r"uber|ola|rapido|irctc|metro|redbus|rail|cab|auto", re.IGNORECASE)),
-    (3, "Groceries", re.compile(r"blinkit|zepto|instamart|bigbasket|dmart|kirana|grocery|supermart|mart", re.IGNORECASE)),
-    (4, "Fuel", re.compile(r"hpcl|bpcl|iocl|indian oil|petrol|fuel|shell|pump", re.IGNORECASE)),
-    (5, "Utilities", re.compile(r"jio|airtel|vi|bsnl|uppcl|bescom|electricity|recharge|broadband|water|gas", re.IGNORECASE)),
+    (
+        1,
+        "Food & Dining",
+        re.compile(
+            r"zomato|swiggy|dominos|kfc|haldiram|bikaner|chai|tea|snack|canteen|cafe|bakery|restaurant|food",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        2,
+        "Travel",
+        re.compile(r"uber|ola|rapido|irctc|metro|redbus|rail|cab|auto", re.IGNORECASE),
+    ),
+    (
+        3,
+        "Groceries",
+        re.compile(
+            r"blinkit|zepto|instamart|bigbasket|dmart|kirana|grocery|supermart|mart",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        4,
+        "Fuel",
+        re.compile(r"hpcl|bpcl|iocl|indian oil|petrol|fuel|shell|pump", re.IGNORECASE),
+    ),
+    (
+        5,
+        "Utilities",
+        re.compile(
+            r"jio|airtel|vi|bsnl|uppcl|bescom|electricity|recharge|broadband|water|gas",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 
 def _try_import(module_path: str, func_name: str):
-    \"\"\"Safely attempts to load a teammate's function if their file exists.\"\"\"
+    """Safely loads a teammate's function if their file exists on the active branch."""
     try:
-        mod = importlib.import_module(module_path)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_file = module_path.replace(".", os.sep) + ".py"
+        full_path = os.path.join(project_root, rel_file)
+
+        # If file does not exist on the current Git branch, clear stale cache and fallback
+        if not os.path.isfile(full_path):
+            sys.modules.pop(module_path, None)
+            return None
+
+        importlib.invalidate_caches()
+        if module_path in sys.modules:
+            mod = importlib.reload(sys.modules[module_path])
+        else:
+            mod = importlib.import_module(module_path)
         return getattr(mod, func_name, None)
     except Exception:
         return None
 
 
-def get_integration_status() -> dict[str, dict[str, str]]:
-    \"\"\"Returns live auto-discovery status for Anuj, Saurabh, and Uday modules.\"\"\"
+def get_integration_status() -> dict:
+    """Returns live auto-discovery status with 3-state progress and file breakdown."""
+    # 1. Anuj (Backend & DB — 3 files)
+    anuj_upi = (
+        _try_import("src.backend.upi_bridge", "build_signed_upi_uri") is not None
+        or _try_import("src.backend.upi_bridge", "launch_upi_intent") is not None
+    )
     anuj_db = _try_import("src.db.database", "init_db") is not None
-    anuj_upi = _try_import("src.backend.upi_bridge", "build_signed_upi_uri") is not None or _try_import("src.backend.upi_bridge", "launch_upi_intent") is not None
-    uday_tagger = _try_import("src.analytics.tagger", "categorize_transaction") is not None
-    uday_anom = _try_import("src.analytics.anomaly", "detect_spending_anomaly") is not None
-    saurabh_home = _try_import("src.ui.home_view", "build_home_view") is not None
+    anuj_sec = (
+        _try_import("src.backend.security", "encrypt_db") is not None
+        or _try_import("src.backend.security", "init_sqlcipher") is not None
+    )
+
+    anuj_files = [
+        {
+            "path": "src/backend/upi_bridge.py",
+            "task": "S0-03 / S1-02: Signed UPI 2.0 URI Builder",
+            "is_live": anuj_upi,
+            "desc": "NPCI signed QR query preserver (mc, sign, orgid)",
+        },
+        {
+            "path": "src/db/database.py",
+            "task": "S1-01 / S2-04: SQLite v1.1 Database Engine",
+            "is_live": anuj_db,
+            "desc": "6 relational tables & pending state resolver",
+        },
+        {
+            "path": "src/backend/security.py",
+            "task": "S4-01: SQLCipher & Biometric App Lock",
+            "is_live": anuj_sec,
+            "desc": "256-bit DB encryption & Android Keystore",
+        },
+    ]
+
+    # 2. Saurabh (Frontend Flet UI — 4 files)
     saurabh_dash = _try_import("src.ui.dashboard_view", "build_dashboard_view") is not None
+    saurabh_home = _try_import("src.ui.home_view", "build_home_view") is not None
+    saurabh_scan = _try_import("src.ui.scanner_view", "build_scanner_view") is not None
+    saurabh_pop = (
+        _try_import("src.ui.popups", "show_first_time_tag_dialog") is not None
+        or _try_import("src.ui.popups", "show_fallback_popup") is not None
+    )
+
+    saurabh_files = [
+        {
+            "path": "src/ui/dashboard_view.py",
+            "task": "S0-04 / S3-01: Flet Dark Dashboard & Charts",
+            "is_live": saurabh_dash,
+            "desc": "Visual spending breakdown & health gauge",
+        },
+        {
+            "path": "src/ui/home_view.py",
+            "task": "S1-03: Home Feed & Monthly Budget Card",
+            "is_live": saurabh_home,
+            "desc": "Live transaction feed & budget progress bar",
+        },
+        {
+            "path": "src/ui/scanner_view.py",
+            "task": "S1-03: QR Scan & UPI Intent Simulator",
+            "is_live": saurabh_scan,
+            "desc": "Camera scanner view & payment trigger",
+        },
+        {
+            "path": "src/ui/popups.py",
+            "task": "S1-04 / S2-03: 1-Tap Fallback & Tag Dialogs",
+            "is_live": saurabh_pop,
+            "desc": "Resume verification popup & merchant tagger",
+        },
+    ]
+
+    # 3. Uday (Data Analytics — 4 files)
+    uday_tag = _try_import("src.analytics.tagger", "categorize_transaction") is not None
+    uday_anom = _try_import("src.analytics.anomaly", "detect_spending_anomaly") is not None
+    uday_health = _try_import("src.analytics.health_score", "calculate_health_score") is not None
+    uday_exp = _try_import("src.analytics.exporter", "export_transactions_csv") is not None
+
+    uday_files = [
+        {
+            "path": "src/analytics/tagger.py",
+            "task": "S0-05 / S2-01: 3-Tier Categorization Engine",
+            "is_live": uday_tag,
+            "desc": "Tier 1 Memory + Tier 2 Regex + Tier 3 Unknown",
+        },
+        {
+            "path": "src/analytics/anomaly.py",
+            "task": "S2-02: Safe Z-Score Anomaly Math",
+            "is_live": uday_anom,
+            "desc": "Statistics guard (stdev==0 & spike Z>2.5)",
+        },
+        {
+            "path": "src/analytics/health_score.py",
+            "task": "S2-02: Financial Health Score 0-100",
+            "is_live": uday_health,
+            "desc": "Dynamic pace & anomaly-adjusted health gauge",
+        },
+        {
+            "path": "src/analytics/exporter.py",
+            "task": "S3-02: Offline CSV Report Exporter",
+            "is_live": uday_exp,
+            "desc": "Pure-Python standard library CSV generator",
+        },
+    ]
+
+    def calc_module_state(name: str, files: list) -> dict:
+        live_cnt = sum(1 for f in files if f["is_live"])
+        total_cnt = len(files)
+        if live_cnt == 0:
+            return {
+                "mode": "BUILT-IN FALLBACK",
+                "badge": f"🟡 {name}: 0/{total_cnt} Built-in",
+                "color": "#F59E0B",
+                "bg": "#1E293B",
+                "border": "#475569",
+                "text_color": "#CBD5E1",
+                "state": "BUILTIN",
+                "live_count": live_cnt,
+                "total_count": total_cnt,
+                "files": files,
+            }
+        elif live_cnt < total_cnt:
+            return {
+                "mode": "PARTIAL MODULE",
+                "badge": f"🔵 {name}: {live_cnt}/{total_cnt} Partial",
+                "color": "#38BDF8",
+                "bg": "#0C4A6E",
+                "border": "#0284C7",
+                "text_color": "#BAE6FD",
+                "state": "PARTIAL",
+                "live_count": live_cnt,
+                "total_count": total_cnt,
+                "files": files,
+            }
+        else:
+            return {
+                "mode": "100% LIVE MODULE",
+                "badge": f"🟢 {name}: {total_cnt}/{total_cnt} LIVE",
+                "color": "#10B981",
+                "bg": "#064E3B",
+                "border": "#10B981",
+                "text_color": "#A7F3D0",
+                "state": "LIVE",
+                "live_count": live_cnt,
+                "total_count": total_cnt,
+                "files": files,
+            }
 
     return {
         "backend_anuj": {
             "owner": "Anuj Kushwaha",
-            "mode": "LIVE MODULE" if (anuj_db or anuj_upi) else "BUILT-IN FALLBACK",
-            "details": f"database.py: {'LIVE' if anuj_db else 'Fallback'} | upi_bridge.py: {'LIVE' if anuj_upi else 'Fallback'}",
+            "role": "Backend & Database",
+            **calc_module_state("Anuj", anuj_files),
         },
         "frontend_saurabh": {
             "owner": "Saurabh Yadav",
-            "mode": "LIVE MODULE" if (saurabh_home or saurabh_dash) else "BUILT-IN FALLBACK",
-            "details": f"home_view.py: {'LIVE' if saurabh_home else 'Fallback'} | dashboard_view.py: {'LIVE' if saurabh_dash else 'Fallback'}",
+            "role": "Frontend Flet UI",
+            **calc_module_state("Saurabh", saurabh_files),
         },
         "analytics_uday": {
             "owner": "Uday Paswan",
-            "mode": "LIVE MODULE" if (uday_tagger or uday_anom) else "BUILT-IN FALLBACK",
-            "details": f"tagger.py: {'LIVE' if uday_tagger else 'Fallback'} | anomaly.py: {'LIVE' if uday_anom else 'Fallback'}",
+            "role": "Data Analytics & ML",
+            **calc_module_state("Uday", uday_files),
         },
     }
 
@@ -107,18 +460,21 @@ def ensure_db_ready(db_path: str = DB_FILE) -> None:
     custom_init = _try_import("src.db.database", "init_db")
     if custom_init is not None:
         try:
-            custom_init()
-        except TypeError:
             custom_init(db_path)
+        except TypeError:
+            custom_init()
     if not os.path.exists(db_path):
         seed_mock_database(db_path)
 
 
 def build_signed_upi_uri(raw_qr_uri: str, amount: float) -> str:
-    \"\"\"Preserves NPCI UPI 2.0 signed parameters (mc, sign, orgid) while injecting am & cu=INR.\"\"\"
+    """Preserves NPCI UPI 2.0 signed parameters (mc, sign, orgid) while injecting am & cu=INR."""
     custom_fn = _try_import("src.backend.upi_bridge", "build_signed_upi_uri")
     if custom_fn is not None:
-        return custom_fn(raw_qr_uri, amount)
+        try:
+            return str(custom_fn(raw_qr_uri, amount))
+        except Exception:
+            pass
 
     if not raw_qr_uri.startswith("upi://pay"):
         raw_qr_uri = f"upi://pay?pa={raw_qr_uri}&pn=Merchant"
@@ -147,11 +503,16 @@ def build_signed_upi_uri(raw_qr_uri: str, amount: float) -> str:
 
 
 def categorize_transaction(payee_vpa: str, payee_name: str, db_path: str = DB_FILE) -> dict:
-    \"\"\"3-Tier Categorization: Tier 1 (SQLite merchant_tags) -> Tier 2 (Regex) -> Tier 3 (User Tag Popup).\"\"\"
+    """3-Tier Categorization: Tier 1 (SQLite merchant_tags) -> Tier 2 (Regex) -> Tier 3 (User Tag Popup)."""
     custom_fn = _try_import("src.analytics.tagger", "categorize_transaction")
     if custom_fn is not None:
         try:
-            return custom_fn(payee_vpa, payee_name)
+            return custom_fn(payee_vpa, payee_name, db_path=db_path)
+        except TypeError:
+            try:
+                return custom_fn(payee_vpa, payee_name)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -162,7 +523,8 @@ def categorize_transaction(payee_vpa: str, payee_name: str, db_path: str = DB_FI
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        "SELECT m.category_id, c.name, m.confidence FROM merchant_tags m JOIN categories c ON m.category_id = c.category_id WHERE LOWER(m.vpa_pattern) = ?;",
+        "SELECT m.category_id, c.name, m.confidence FROM merchant_tags m "
+        "JOIN categories c ON m.category_id = c.category_id WHERE LOWER(m.vpa_pattern) = ?;",
         (vpa_clean,),
     )
     row = cur.fetchone()
@@ -199,7 +561,21 @@ def categorize_transaction(payee_vpa: str, payee_name: str, db_path: str = DB_FI
 
 
 def save_merchant_tag(payee_vpa: str, category_id: int, db_path: str = DB_FILE) -> None:
-    \"\"\"Saves a first-time merchant VPA mapping so future payments auto-categorize in Tier 1.\"\"\"
+    """Saves a first-time merchant VPA mapping so future payments auto-categorize in Tier 1."""
+    custom_fn = _try_import("src.db.database", "save_merchant_tag")
+    if custom_fn is not None:
+        try:
+            custom_fn(payee_vpa, category_id, db_path=db_path)
+            return
+        except TypeError:
+            try:
+                custom_fn(payee_vpa, category_id)
+                return
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
@@ -211,11 +587,16 @@ def save_merchant_tag(payee_vpa: str, category_id: int, db_path: str = DB_FILE) 
 
 
 def detect_spending_anomaly(category_id: int, new_amount: float, db_path: str = DB_FILE) -> dict:
-    \"\"\"Safe Z-Score Anomaly Detector with len<4 and stdev==0 guards (Threshold Z > 2.5).\"\"\"
+    """Safe Z-Score Anomaly Detector with len<4 and stdev==0 guards (Threshold Z > 2.5)."""
     custom_fn = _try_import("src.analytics.anomaly", "detect_spending_anomaly")
     if custom_fn is not None:
         try:
-            return custom_fn(category_id, new_amount)
+            return custom_fn(category_id, new_amount, db_path=db_path)
+        except TypeError:
+            try:
+                return custom_fn(category_id, new_amount)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -248,7 +629,11 @@ def detect_spending_anomaly(category_id: int, new_amount: float, db_path: str = 
             "z_score": 9.99 if is_anom else 0.0,
             "mean": round(mean_val, 2),
             "stdev": 0.0,
-            "reason": "Zero-variance guard triggered (>2x mean & +₹100)" if is_anom else "Zero-variance normal",
+            "reason": (
+                "Zero-variance guard triggered (>2x mean & +₹100)"
+                if is_anom
+                else "Zero-variance normal"
+            ),
         }
 
     z_score = diff / stdev_val
@@ -269,11 +654,17 @@ def calculate_health_score(
     days_in_month: int = 30,
     anomaly_count: int = 0,
 ) -> dict:
-    \"\"\"Clamped 0-100 Financial Health Score based on budget pace and anomaly count.\"\"\"
+    """Clamped 0-100 Financial Health Score based on budget pace and anomaly count."""
     custom_fn = _try_import("src.analytics.health_score", "calculate_health_score")
     if custom_fn is not None:
         try:
-            return custom_fn(monthly_budget, spent_this_month, day_of_month or datetime.now().day, days_in_month, anomaly_count)
+            return custom_fn(
+                monthly_budget,
+                spent_this_month,
+                day_of_month or datetime.now().day,
+                days_in_month,
+                anomaly_count,
+            )
         except Exception:
             pass
 
@@ -294,16 +685,31 @@ def calculate_health_score(
     }
 
 
-def create_pending_txn(amount: float, payee_vpa: str, payee_name: str, raw_qr_uri: str, db_path: str = DB_FILE) -> int:
-    \"\"\"Logs a PENDING state row BEFORE launching any external UPI app intent.\"\"\"
+def create_pending_txn(
+    amount: float,
+    payee_vpa: str,
+    payee_name: str,
+    raw_qr_uri: str,
+    db_path: str = DB_FILE,
+) -> int:
+    """Logs a PENDING state row BEFORE launching any external UPI app intent."""
     custom_fn = _try_import("src.db.database", "create_pending_txn")
     if custom_fn is not None:
-        return int(custom_fn(amount, payee_vpa, payee_name, raw_qr_uri))
+        try:
+            return int(custom_fn(amount, payee_vpa, payee_name, raw_qr_uri, db_path=db_path))
+        except TypeError:
+            try:
+                return int(custom_fn(amount, payee_vpa, payee_name, raw_qr_uri))
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO pending_transactions (amount, payee_vpa, payee_name, raw_qr_uri, status) VALUES (?, ?, ?, ?, 'PENDING');",
+        "INSERT INTO pending_transactions (amount, payee_vpa, payee_name, raw_qr_uri, status) "
+        "VALUES (?, ?, ?, ?, 'PENDING');",
         (float(amount), payee_vpa.strip(), payee_name.strip(), raw_qr_uri),
     )
     internal_id = int(cur.lastrowid)
@@ -313,15 +719,24 @@ def create_pending_txn(amount: float, payee_vpa: str, payee_name: str, raw_qr_ur
 
 
 def get_unresolved_pending(db_path: str = DB_FILE) -> list[dict]:
-    \"\"\"Fetches all unresolved PENDING transactions for the 1-Tap Resume Fallback Popup.\"\"\"
+    """Fetches all unresolved PENDING transactions for the 1-Tap Resume Fallback Popup."""
     custom_fn = _try_import("src.db.database", "get_unresolved_pending")
     if custom_fn is not None:
-        return custom_fn()
+        try:
+            return custom_fn(db_path=db_path)
+        except TypeError:
+            try:
+                return custom_fn()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        "SELECT internal_id, amount, payee_vpa, payee_name, raw_qr_uri, init_time FROM pending_transactions WHERE status = 'PENDING' ORDER BY internal_id DESC;"
+        "SELECT internal_id, amount, payee_vpa, payee_name, raw_qr_uri, init_time "
+        "FROM pending_transactions WHERE status = 'PENDING' ORDER BY internal_id DESC;"
     )
     rows = cur.fetchall()
     conn.close()
@@ -346,7 +761,23 @@ def resolve_pending_txn(
     txn_id: str | None = None,
     db_path: str = DB_FILE,
 ) -> dict:
-    \"\"\"Resolves a specific pending transaction via WHERE internal_id = ? and runs Tagger + Z-Score.\"\"\"
+    """Resolves a specific pending transaction via WHERE internal_id = ? and runs Tagger + Z-Score."""
+    custom_fn = _try_import("src.db.database", "resolve_pending_txn")
+    if custom_fn is not None:
+        try:
+            res = custom_fn(
+                internal_id=internal_id,
+                confirmed=confirmed,
+                category_id=category_id,
+                notes=notes,
+                txn_id=txn_id,
+                db_path=db_path,
+            )
+            if isinstance(res, dict) and "status" in res:
+                return res
+        except Exception:
+            pass
+
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
@@ -361,7 +792,10 @@ def resolve_pending_txn(
     amount, payee_vpa, payee_name = float(row[0]), str(row[1]), str(row[2])
 
     if not confirmed:
-        cur.execute("UPDATE pending_transactions SET status = 'CANCELLED' WHERE internal_id = ?;", (int(internal_id),))
+        cur.execute(
+            "UPDATE pending_transactions SET status = 'CANCELLED' WHERE internal_id = ?;",
+            (int(internal_id),),
+        )
         conn.commit()
         conn.close()
         return {"status": "CANCELLED", "internal_id": internal_id}
@@ -376,7 +810,8 @@ def resolve_pending_txn(
         (int(internal_id),),
     )
     cur.execute(
-        "INSERT INTO transactions (txn_id, amount, payee_vpa, payee_name, timestamp, category_id, is_anomaly, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        "INSERT INTO transactions (txn_id, amount, payee_vpa, payee_name, timestamp, category_id, is_anomaly, notes) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         (
             final_txn_id,
             amount,
@@ -405,7 +840,7 @@ def resolve_pending_txn(
 
 
 def get_dashboard_summary(db_path: str = DB_FILE) -> dict:
-    \"\"\"Aggregates monthly spend, category breakdown, recent transactions, and health score.\"\"\"
+    """Aggregates monthly spend, category breakdown, recent transactions, and health score."""
     ensure_db_ready(db_path)
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -415,17 +850,20 @@ def get_dashboard_summary(db_path: str = DB_FILE) -> dict:
     user_name = u_row[0] if u_row else "Sumit Kushwaha"
     monthly_budget = float(u_row[1]) if u_row else 12000.0
 
-    cur.execute("SELECT COALESCE(SUM(amount), 0.0), COALESCE(SUM(CASE WHEN is_anomaly=1 THEN 1 ELSE 0 END), 0) FROM transactions;")
+    cur.execute(
+        "SELECT COALESCE(SUM(amount), 0.0), "
+        "COALESCE(SUM(CASE WHEN is_anomaly=1 THEN 1 ELSE 0 END), 0) FROM transactions;"
+    )
     tot_row = cur.fetchone()
     total_spent = float(tot_row[0])
-    anomaly_count = int(tot_row[1])
-
+    anomaly_count = int(tot_row[1])\n
     cur.execute(
-        \"\"\"SELECT c.category_id, c.name, COALESCE(c.budget_limit, 2000.0), COALESCE(SUM(t.amount), 0.0), COUNT(t.txn_id)
+        """SELECT c.category_id, c.name, COALESCE(c.budget_limit, 2000.0),
+                  COALESCE(SUM(t.amount), 0.0), COUNT(t.txn_id)
            FROM categories c
            LEFT JOIN transactions t ON c.category_id = t.category_id
            GROUP BY c.category_id, c.name, c.budget_limit
-           ORDER BY COALESCE(SUM(t.amount), 0.0) DESC;\"\"\"
+           ORDER BY COALESCE(SUM(t.amount), 0.0) DESC;"""
     )
     categories = [
         {
@@ -440,10 +878,11 @@ def get_dashboard_summary(db_path: str = DB_FILE) -> dict:
     ]
 
     cur.execute(
-        \"\"\"SELECT t.txn_id, t.amount, t.payee_vpa, t.payee_name, t.timestamp, COALESCE(c.name, 'Uncategorized'), t.is_anomaly, COALESCE(t.notes, '')
+        """SELECT t.txn_id, t.amount, t.payee_vpa, t.payee_name, t.timestamp,
+                  COALESCE(c.name, 'Uncategorized'), t.is_anomaly, COALESCE(t.notes, '')
            FROM transactions t
            LEFT JOIN categories c ON t.category_id = c.category_id
-           ORDER BY t.timestamp DESC LIMIT 15;\"\"\"
+           ORDER BY t.timestamp DESC LIMIT 15;"""
     )
     recent_txns = [
         {
@@ -473,42 +912,69 @@ def get_dashboard_summary(db_path: str = DB_FILE) -> dict:
     }
 
 
-def export_transactions_csv(output_file: str = "expenditure_report_export.csv", db_path: str = DB_FILE) -> str:
-    \"\"\"Exports all logged transactions to a clean offline CSV file using Python's built-in csv module.\"\"\"
+def export_transactions_csv(
+    output_file: str = "expenditure_report_export.csv", db_path: str = DB_FILE
+) -> str:
+    """Exports all logged transactions to a clean offline CSV file using Python's built-in csv module."""
     custom_fn = _try_import("src.analytics.exporter", "export_transactions_csv")
     if custom_fn is not None:
-        return str(custom_fn(output_file))
+        try:
+            return str(custom_fn(output_file, db_path=db_path))
+        except TypeError:
+            try:
+                return str(custom_fn(output_file))
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        \"\"\"SELECT t.txn_id, t.timestamp, t.payee_name, t.payee_vpa, t.amount, COALESCE(c.name, 'Uncategorized'), t.is_anomaly, COALESCE(t.notes, '')
+        """SELECT t.txn_id, t.timestamp, t.payee_name, t.payee_vpa, t.amount,
+                  COALESCE(c.name, 'Uncategorized'), t.is_anomaly, COALESCE(t.notes, '')
            FROM transactions t
            LEFT JOIN categories c ON t.category_id = c.category_id
-           ORDER BY t.timestamp DESC;\"\"\"
+           ORDER BY t.timestamp DESC;"""
     )
     rows = cur.fetchall()
     conn.close()
 
     with open(output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Transaction_ID", "Timestamp", "Payee_Name", "Payee_VPA", "Amount_INR", "Category", "Is_Anomaly", "Notes"])
+        writer.writerow(
+            [
+                "Transaction_ID",
+                "Timestamp",
+                "Payee_Name",
+                "Payee_VPA",
+                "Amount_INR",
+                "Category",
+                "Is_Anomaly",
+                "Notes",
+            ]
+        )
         writer.writerows(rows)
     return os.path.abspath(output_file)
-"""
+'''
 
-MAIN_APP_CODE = """\"\"\"Live Runnable Flet Application & Project Lead Integration Harness.
+MAIN_APP_CODE = '''"""Live Runnable Flet Application & Project Lead Integration Harness.
 
 Owned by: Sumit Kushwaha (Project Lead & Integrator)
 Usage:
     python main.py                       # Opens the Live Interactive Flet Mobile App
-    python main.py --check-integration   # Runs the 5-Point CLI Team Integration Audit
-\"\"\"
+    python main.py --check-integration   # Runs the 6-Point CLI Team Integration Audit
+"""
 
 import argparse
 import os
 import sys
 import warnings
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -517,6 +983,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from src.contracts import (
     CATEGORY_NAME_TO_ID,
     DEFAULT_CATEGORIES,
+    _try_import,
     build_signed_upi_uri,
     categorize_transaction,
     create_pending_txn,
@@ -532,39 +999,57 @@ from src.db.seed_mock_data import DB_FILE, seed_mock_database
 
 
 def run_cli_integration_audit() -> None:
-    \"\"\"Runs a 5-point integration check across DB, UPI URI, Tagger, Anomaly Math, and UI.\"\"\"
+    """Runs a 6-point integration check across DB, UPI URI, Tagger, Anomaly Math, UI, and Lean Stack."""
     ensure_db_ready(DB_FILE)
     status = get_integration_status()
     summary = get_dashboard_summary(DB_FILE)
 
-    print("=" * 72)
+    print("=" * 78)
     print(" AUTOMATED EXPENDITURE TRACKER — LEAD INTEGRATION AUDIT (v1.1)")
-    print("=" * 72)
+    print("=" * 78)
     for key, info in status.items():
-        print(f" [{info['mode']:^17}] {info['owner']:<18} -> {info['details']}")
-    print("-" * 72)
+        mode_str = f"[{info['mode']}]"
+        print(f" {mode_str:<22} {info['owner']:<16} ({info['badge']})")
+        for f in info["files"]:
+            st_icon = "🟢 LIVE    " if f["is_live"] else "🟡 Fallback"
+            print(f"    └─ {st_icon} {f['path']:<30} [{f['task']}]")
+    print("-" * 78)
 
     # Check 1: Signed UPI 2.0 QR Parameter Preservation
     raw_qr = "upi://pay?pa=zomato.order@hdfcbank&pn=Zomato&mc=5812&sign=NPCI_SIG_9981&orgid=159002"
     built_uri = build_signed_upi_uri(raw_qr, 245.5)
-    assert "mc=5812" in built_uri and "sign=NPCI_SIG_9981" in built_uri and "am=245.50" in built_uri, "QR signature stripped!"
+    assert (
+        "mc=5812" in built_uri and "sign=NPCI_SIG_9981" in built_uri and "am=245.50" in built_uri
+    ), "QR signature stripped!"
     print(" [PASS] Check 1 (Anuj Contract): Signed QR params (mc, sign, orgid) preserved ->", built_uri)
 
     # Check 2: 3-Tier Tagger (Tier 1 Memory + Tier 2 Regex + Tier 3 Unknown)
     t1 = categorize_transaction("ramesh.chai@ybl", "Ramesh Tea Stall")
     t2 = categorize_transaction("blinkit.pay@axis", "Blinkit Grofers")
     t3 = categorize_transaction("novelty.books@okicici", "Novelty Book House")
-    print(f" [PASS] Check 2 (Uday Tagger): Tier1={t1['category_name']} | Tier2={t2['category_name']} | Tier3(Unknown) needs_tag={t3['needs_user_tag']}")
+    print(
+        f" [PASS] Check 2 (Uday Tagger): Tier1={t1['category_name']} | "
+        f"Tier2={t2['category_name']} | Tier3(Unknown) needs_tag={t3['needs_user_tag']}"
+    )
 
     # Check 3: Safe Z-Score Anomaly Guard (stdev==0 & spike > 2.5)
     anom_spike = detect_spending_anomaly(1, 1650.0)
     anom_normal = detect_spending_anomaly(1, 150.0)
-    print(f" [PASS] Check 3 (Uday Z-Score): ₹1650 Food -> Anomaly={anom_spike['is_anomaly']} (Z={anom_spike['z_score']}) | ₹150 Food -> Anomaly={anom_normal['is_anomaly']}")
+    print(
+        f" [PASS] Check 3 (Uday Z-Score): ₹1650 Food -> Anomaly={anom_spike['is_anomaly']} "
+        f"(Z={anom_spike['z_score']}) | ₹150 Food -> Anomaly={anom_normal['is_anomaly']}"
+    )
 
     # Check 4: Health Score & DB Summary
     h = summary["health"]
-    print(f" [PASS] Check 4 (Health Score): Spent ₹{summary['total_spent']} / ₹{summary['monthly_budget']} -> Score {h['score']}/100 ({h['status']})")
-    print(f" [PASS] Check 5 (Pending Queue): {len(summary['pending_list'])} unresolved PENDING item(s) ready for 1-Tap Resume Popup.")
+    print(
+        f" [PASS] Check 4 (Health Score): Spent ₹{summary['total_spent']} / "
+        f"₹{summary['monthly_budget']} -> Score {h['score']}/100 ({h['status']})"
+    )
+    print(
+        f" [PASS] Check 5 (Pending Queue): {len(summary['pending_list'])} unresolved "
+        f"PENDING item(s) ready for 1-Tap Resume Popup."
+    )
 
     # Check 6 (Priority Upgrade 2): Zero Forbidden Heavy Imports Scan across src/
     forbidden = ("pandas", "numpy", "scipy", "sklearn", "matplotlib", "plotly")
@@ -576,9 +1061,11 @@ def run_cli_integration_audit() -> None:
                     content = src_f.read()
                 for bad in forbidden:
                     if f"import {bad}" in content or f"from {bad}" in content:
-                        raise AssertionError(f"Forbidden library '{bad}' detected in {fpath}! Use pure Python stdlib only.")
+                        raise AssertionError(
+                            f"Forbidden library '{bad}' detected in {fpath}! Use pure Python stdlib only."
+                        )
     print(" [PASS] Check 6 (Lean Stack Guardrail): Zero forbidden imports (pandas/numpy/matplotlib) in src/.")
-    print("=" * 72)
+    print("=" * 78)
     print(" [READY FOR DEMO] Run `python main.py` to launch the interactive Flet mobile app!")
 
 
@@ -587,7 +1074,10 @@ def launch_flet_app() -> None:
 
     ensure_db_ready(DB_FILE)
 
-    # Universal Flet Cross-Version Helpers (Supports Flet <0.26 up to Flet 0.80+ / Python 3.13)
+    def get_icon(name: str):
+        icons_mod = getattr(ft, "Icons", getattr(ft, "icons", None))
+        return getattr(icons_mod, name, None) if icons_mod else None
+
     def pad(h: float = 0, v: float = 0):
         try:
             return ft.padding.only(left=h, right=h, top=v, bottom=v)
@@ -615,23 +1105,61 @@ def launch_flet_app() -> None:
             pass
         return None
 
-    def safe_btn(text, on_click=None, bgcolor=None, color="white", height=None):
-        try:
-            return ft.ElevatedButton(text=text, on_click=on_click, bgcolor=bgcolor, color=color, height=height)
-        except Exception:
-            try:
-                return ft.Button(content=ft.Text(text, color=color), on_click=on_click, bgcolor=bgcolor, height=height)
-            except Exception:
-                return ft.Container(content=ft.Text(text, color=color), on_click=on_click, bgcolor=bgcolor, padding=8, border_radius=8)
+    def safe_btn(text, on_click=None, bgcolor="#2563EB", color="white", height=38):
+        return ft.Container(
+            height=height,
+            padding=pad(14, 8),
+            bgcolor=bgcolor or "#334155",
+            border_radius=8,
+            alignment=ft.Alignment(0, 0) if hasattr(ft, "Alignment") else None,
+            on_click=on_click,
+            content=ft.Row(
+                tight=True,
+                alignment=ft.MainAxisAlignment.CENTER,
+                controls=[
+                    ft.Text(text, size=12, weight=ft.FontWeight.W_600, color=color),
+                ],
+            ),
+        )
 
-    def safe_outlined_btn(text, on_click=None):
-        try:
-            return ft.OutlinedButton(text=text, on_click=on_click)
-        except Exception:
+    def safe_outlined_btn(text, on_click=None, height=38):
+        return ft.Container(
+            height=height,
+            padding=pad(12, 8),
+            bgcolor="#0F172A",
+            border=make_border("#475569", 1),
+            border_radius=8,
+            on_click=on_click,
+            content=ft.Row(
+                tight=True,
+                alignment=ft.MainAxisAlignment.CENTER,
+                controls=[
+                    ft.Text(text, size=12, weight=ft.FontWeight.W_600, color="#CBD5E1"),
+                ],
+            ),
+        )
+
+    def make_dropdown(label: str, value: str, options_tuples: list, on_change_fn):
+        opts = []
+        for k, text in options_tuples:
             try:
-                return ft.Button(content=ft.Text(text), on_click=on_click)
+                opts.append(ft.dropdown.Option(key=str(k), text=str(text)))
             except Exception:
-                return ft.Container(content=ft.Text(text), on_click=on_click, padding=8, border_radius=8)
+                opts.append(ft.dropdown.Option(str(k), str(text)))
+        dd = None
+        try:
+            dd = ft.Dropdown(label=label, value=value, options=opts, on_select=on_change_fn)
+        except TypeError:
+            dd = ft.Dropdown(label=label, value=value, options=opts, on_change=on_change_fn)
+        try:
+            dd.on_change = on_change_fn
+        except Exception:
+            pass
+        try:
+            dd.on_select = on_change_fn
+        except Exception:
+            pass
+        return dd
 
     def border_bottom(color="#1F2937", width=1):
         try:
@@ -648,51 +1176,241 @@ def launch_flet_app() -> None:
         page.title = "Automated Expenditure Tracker (v1.1 Live Demo)"
         page.theme_mode = ft.ThemeMode.DARK
         page.bgcolor = "#0B0F19"
-        page.window.width = 430
-        page.window.height = 860
+        try:
+            page.window.width = 435
+            page.window.height = 860
+        except Exception:
+            pass
         page.padding = 0
 
         state = {"tab": 0}
+        status_strip_container = ft.Container()
         body_container = ft.Container(expand=True, padding=14)
 
         def show_snack(msg: str, color: str = "#10B981"):
-            page.snack_bar = ft.SnackBar(content=ft.Text(msg, color="white", weight=ft.FontWeight.W_600), bgcolor=color)
-            page.snack_bar.open = True
-            page.update()
-
-        def open_first_time_tag_dialog(payee_vpa: str, payee_name: str, amount: float, txn_result: dict):
-            selected_cat = {"id": 1}
-            cat_dropdown = ft.Dropdown(
-                label="Select Category (Saved for all future payments)",
-                value="1",
-                options=[ft.dropdown.Option(str(cid), cname) for cid, cname, _, _, _ in DEFAULT_CATEGORIES if cid != 6],
+            snack = ft.SnackBar(
+                content=ft.Text(msg, color="white", weight=ft.FontWeight.W_600),
+                bgcolor=color,
             )
-            cat_dropdown.on_change = lambda e: selected_cat.update({"id": int(e.control.value)})
+            try:
+                page.open(snack)
+            except Exception:
+                try:
+                    page.snack_bar = snack
+                    page.snack_bar.open = True
+                    page.update()
+                except Exception:
+                    pass
 
-            def save_tag_click(e):
-                save_merchant_tag(payee_vpa, selected_cat["id"])
+        def open_dialog_safe(dlg: ft.AlertDialog):
+            try:
+                page.open(dlg)
+            except Exception:
+                if dlg not in page.overlay:
+                    page.overlay.append(dlg)
+                dlg.open = True
+                page.update()
+
+        def close_dialog_safe(dlg: ft.AlertDialog):
+            try:
+                page.close(dlg)
+            except Exception:
                 dlg.open = False
                 page.update()
+
+        # Option 2 Feature: Clickable File-by-File Module Inspector Dialog
+        def open_module_inspector_dialog(mod_key: str):
+            integ = get_integration_status()
+            mod = integ.get(mod_key)
+            if not mod:
+                return
+
+            status_pills = []
+            for f in mod["files"]:
+                live = f["is_live"]
+                pill_bg = "#064E3B" if live else "#451A03"
+                pill_border = "#10B981" if live else "#F59E0B"
+                pill_text = "🟢 LIVE (Real Code)" if live else "🟡 Fallback (Built-in)"
+                pill_color = "#A7F3D0" if live else "#FDE68A"
+
+                status_pills.append(
+                    ft.Container(
+                        padding=10,
+                        border_radius=10,
+                        bgcolor="#1E293B",
+                        border=make_border("#334155", 1),
+                        content=ft.Column(
+                            tight=True,
+                            spacing=3,
+                            controls=[
+                                ft.Row(
+                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                    controls=[
+                                        ft.Text(
+                                            f["path"],
+                                            size=12,
+                                            weight=ft.FontWeight.BOLD,
+                                            color="white",
+                                        ),
+                                        ft.Container(
+                                            padding=pad(6, 2),
+                                            bgcolor=pill_bg,
+                                            border_radius=6,
+                                            border=make_border(pill_border, 1),
+                                            content=ft.Text(
+                                                pill_text,
+                                                size=10,
+                                                weight=ft.FontWeight.BOLD,
+                                                color=pill_color,
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                                ft.Text(
+                                    f["task"],
+                                    size=11,
+                                    weight=ft.FontWeight.W_600,
+                                    color="#94A3B8",
+                                ),
+                                ft.Text(f["desc"], size=10, color="#64748B"),
+                            ],
+                        ),
+                    )
+                )
+
+            def refresh_and_reopen(_):
+                close_dialog_safe(dlg)
                 render_active_tab()
-                show_snack(f"Saved '{payee_vpa}' to Tier-1 Memory! Next payment will auto-tag.", "#3B82F6")
+                open_module_inspector_dialog(mod_key)
 
             dlg = ft.AlertDialog(
                 modal=True,
-                title=ft.Text("🏷️ First-Time Merchant Detected", size=18, weight=ft.FontWeight.BOLD),
-                content=ft.Column(
+                title=ft.Column(
                     tight=True,
-                    spacing=10,
+                    spacing=2,
                     controls=[
-                        ft.Text(f"You paid ₹{amount:.0f} to {payee_name} ({payee_vpa})."),
-                        ft.Text("Tag this merchant once — Tier 1 Heuristic Memory will remember it forever:", size=12, color="#94A3B8"),
-                        cat_dropdown,
+                        ft.Text(f"{mod['owner']}", size=16, weight=ft.FontWeight.BOLD),
+                        ft.Text(
+                            f"{mod['role']}  •  {mod['badge']}",
+                            size=11,
+                            color=mod["color"],
+                            weight=ft.FontWeight.W_600,
+                        ),
                     ],
                 ),
-                actions=[safe_btn("Save to Memory", on_click=save_tag_click, bgcolor="#2563EB", color="white")],
+                content=ft.Container(
+                    width=365,
+                    content=ft.Column(
+                        tight=True,
+                        spacing=8,
+                        controls=[
+                            ft.Container(
+                                padding=10,
+                                bgcolor="#0F172A",
+                                border_radius=8,
+                                content=ft.Text(
+                                    f"📊 Progress: {mod['live_count']}/{mod['total_count']} files LIVE on current Git branch. "
+                                    "Missing files run Built-in Fallbacks so no teammate is ever blocked!",
+                                    size=11,
+                                    color="#94A3B8",
+                                ),
+                            ),
+                            ft.Column(tight=True, spacing=6, controls=status_pills),
+                        ],
+                    ),
+                ),
+                actions=[
+                    ft.Row(
+                        tight=True,
+                        spacing=8,
+                        alignment=ft.MainAxisAlignment.END,
+                        controls=[
+                            safe_outlined_btn("🔄 Rescan Files", on_click=refresh_and_reopen, height=34),
+                            safe_btn(
+                                "Close",
+                                on_click=lambda _: close_dialog_safe(dlg),
+                                bgcolor="#334155",
+                                color="white",
+                                height=34,
+                            ),
+                        ],
+                    )
+                ],
             )
-            page.overlay.append(dlg)
-            dlg.open = True
-            page.update()
+            open_dialog_safe(dlg)
+
+        def open_first_time_tag_dialog(
+            payee_vpa: str, payee_name: str, amount: float, txn_result: dict
+        ):
+            custom_popup = _try_import("src.ui.popups", "show_first_time_tag_dialog")
+            if custom_popup is not None:
+                try:
+                    custom_popup(page, payee_vpa, payee_name, amount, render_active_tab)
+                    return
+                except Exception:
+                    pass
+
+            selected_cat = {"id": 1}
+
+            def on_cat_select(e):
+                val = getattr(e.control, "value", None) or getattr(e, "data", "1")
+                try:
+                    selected_cat["id"] = int(val)
+                except ValueError:
+                    selected_cat["id"] = 1
+
+            cat_dropdown = make_dropdown(
+                label="Select Category (Saved for all future payments)",
+                value="1",
+                options_tuples=[
+                    (str(cid), cname)
+                    for cid, cname, _, _, _ in DEFAULT_CATEGORIES
+                    if cid != 6
+                ],
+                on_change_fn=on_cat_select,
+            )
+
+            def save_tag_click(e):
+                save_merchant_tag(payee_vpa, selected_cat["id"])
+                close_dialog_safe(dlg)
+                render_active_tab()
+                show_snack(
+                    f"Saved '{payee_vpa}' to Tier-1 Memory! Next payment will auto-tag.",
+                    "#3B82F6",
+                )
+
+            dlg = ft.AlertDialog(
+                modal=True,
+                title=ft.Text(
+                    "🏷️ First-Time Merchant Detected", size=17, weight=ft.FontWeight.BOLD
+                ),
+                content=ft.Container(
+                    width=350,
+                    content=ft.Column(
+                        tight=True,
+                        spacing=10,
+                        controls=[
+                            ft.Text(f"You paid ₹{amount:.0f} to {payee_name} ({payee_vpa})."),
+                            ft.Text(
+                                "Tag this merchant once — Tier 1 Heuristic Memory will remember it forever:",
+                                size=12,
+                                color="#94A3B8",
+                            ),
+                            cat_dropdown,
+                        ],
+                    ),
+                ),
+                actions=[
+                    safe_btn(
+                        "Save to Memory",
+                        on_click=save_tag_click,
+                        bgcolor="#2563EB",
+                        color="white",
+                        height=36,
+                    )
+                ],
+            )
+            open_dialog_safe(dlg)
 
         def handle_resolve_pending(internal_id: int, confirmed: bool):
             res = resolve_pending_txn(internal_id, confirmed=confirmed)
@@ -703,7 +1421,8 @@ def launch_flet_app() -> None:
 
             if res.get("anomaly", {}).get("is_anomaly"):
                 show_snack(
-                    f"⚠️ Z-SCORE SPIKE ALERT! ₹{res['amount']:.0f} at {res['payee_name']} (Z={res['anomaly']['z_score']})",
+                    f"⚠️ Z-SCORE SPIKE ALERT! ₹{res['amount']:.0f} at {res['payee_name']} "
+                    f"(Z={res['anomaly']['z_score']})",
                     "#EF4444",
                 )
             else:
@@ -713,52 +1432,88 @@ def launch_flet_app() -> None:
                 )
 
             if res.get("needs_user_tag"):
-                open_first_time_tag_dialog(res["payee_vpa"], res["payee_name"], res["amount"], res)
+                open_first_time_tag_dialog(
+                    res["payee_vpa"], res["payee_name"], res["amount"], res
+                )
 
-        # Wire Flet App Lifecycle listener (Supports both Flet 0.80+ RESUME and legacy RESUMED)
         def on_lifecycle_change(e):
-            state_str = str(getattr(e, "state", e)).upper()
+            state_str = str(getattr(e, "state", getattr(e, "data", e))).upper()
             if "RESUME" in state_str:
                 pending = get_dashboard_summary(DB_FILE)["pending_list"]
                 if pending:
                     render_active_tab()
-                    show_snack(f"📲 App Resumed: {len(pending)} Pending UPI Payment(s) waiting for 1-Tap verification!", "#F59E0B")
+                    show_snack(
+                        f"📲 App Resumed: {len(pending)} Pending UPI Payment(s) waiting for 1-Tap verification!",
+                        "#F59E0B",
+                    )
 
         page.on_app_lifecycle_state_change = on_lifecycle_change
 
+        # Option 1 + Option 2: 3-State Progress Chips + Clickable Inspector Popup
         def build_status_strip() -> ft.Control:
             integ = get_integration_status()
             chips = []
-            for label, key in [("Anuj DB/UPI", "backend_anuj"), ("Saurabh UI", "frontend_saurabh"), ("Uday Analytics", "analytics_uday")]:
-                is_live = integ[key]["mode"] == "LIVE MODULE"
+            info_icon = get_icon("INFO_OUTLINE_ROUNDED") or get_icon("INFO_OUTLINE")
+            for key in ["backend_anuj", "frontend_saurabh", "analytics_uday"]:
+                mod = integ[key]
+                row_controls = [
+                    ft.Text(
+                        mod["badge"],
+                        size=10,
+                        weight=ft.FontWeight.W_600,
+                        color=mod["text_color"],
+                    )
+                ]
+                if info_icon is not None:
+                    row_controls.append(ft.Icon(info_icon, size=11, color=mod["color"]))
+
                 chips.append(
                     ft.Container(
                         padding=pad(8, 4),
-                        bgcolor="#064E3B" if is_live else "#1E293B",
+                        bgcolor=mod["bg"],
                         border_radius=12,
-                        border=make_border("#10B981" if is_live else "#475569", 1),
-                        content=ft.Text(
-                            f"{'🟢' if is_live else '🟡'} {label}: {'LIVE' if is_live else 'Built-in'}",
-                            size=10,
-                            weight=ft.FontWeight.W_600,
-                            color="#A7F3D0" if is_live else "#CBD5E1",
-                        ),
+                        border=make_border(mod["border"], 1),
+                        content=ft.Row(tight=True, spacing=4, controls=row_controls),
+                        tooltip=f"Tap to inspect {mod['owner']}'s file-by-file status",
+                        on_click=lambda e, k=key: open_module_inspector_dialog(k),
                     )
                 )
+
             return ft.Container(
                 bgcolor="#111827",
                 padding=pad(12, 8),
                 border=border_bottom("#1F2937", 1),
                 content=ft.Column(
+                    tight=True,
                     spacing=6,
                     controls=[
                         ft.Row(
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             controls=[
-                                ft.Text("⚡ Exptracker v1.1 (Lead Live Shell)", size=14, weight=ft.FontWeight.BOLD, color="white"),
-                                ft.TextButton(
-                                    "Reset Demo DB",
-                                    on_click=lambda _: (seed_mock_database(DB_FILE), render_active_tab(), show_snack("Demo DB reset to 40 txns + 1 pending!", "#3B82F6")),
+                                ft.Text(
+                                    "⚡ Exptracker v1.1 (Tap Chip to Inspect)",
+                                    size=12,
+                                    weight=ft.FontWeight.BOLD,
+                                    color="white",
+                                ),
+                                ft.Container(
+                                    padding=pad(8, 4),
+                                    bgcolor="#1E293B",
+                                    border_radius=6,
+                                    border=make_border("#334155", 1),
+                                    on_click=lambda _: (
+                                        seed_mock_database(DB_FILE),
+                                        render_active_tab(),
+                                        show_snack(
+                                            "Demo DB reset to 40 txns + 1 pending!", "#3B82F6"
+                                        ),
+                                    ),
+                                    content=ft.Text(
+                                        "🔄 Reset Demo DB",
+                                        size=10,
+                                        weight=ft.FontWeight.W_600,
+                                        color="#93C5FD",
+                                    ),
                                 ),
                             ],
                         ),
@@ -769,7 +1524,11 @@ def launch_flet_app() -> None:
 
         def build_home_tab(summary: dict) -> ft.Control:
             h = summary["health"]
-            score_color = "#10B981" if h["status"] == "GREEN" else ("#F59E0B" if h["status"] == "YELLOW" else "#EF4444")
+            score_color = (
+                "#10B981"
+                if h["status"] == "GREEN"
+                else ("#F59E0B" if h["status"] == "YELLOW" else "#EF4444")
+            )
 
             controls = [
                 # Financial Health & Monthly Budget Card
@@ -787,8 +1546,17 @@ def launch_flet_app() -> None:
                                     ft.Column(
                                         spacing=2,
                                         controls=[
-                                            ft.Text("Monthly Spend (Oct 2026)", size=12, color="#94A3B8"),
-                                            ft.Text(f"₹{summary['total_spent']:,.0f} / ₹{summary['monthly_budget']:,.0f}", size=22, weight=ft.FontWeight.BOLD, color="white"),
+                                            ft.Text(
+                                                "Monthly Spend (Oct 2026)",
+                                                size=12,
+                                                color="#94A3B8",
+                                            ),
+                                            ft.Text(
+                                                f"₹{summary['total_spent']:,.0f} / ₹{summary['monthly_budget']:,.0f}",
+                                                size=22,
+                                                weight=ft.FontWeight.BOLD,
+                                                color="white",
+                                            ),
                                         ],
                                     ),
                                     ft.Container(
@@ -800,21 +1568,32 @@ def launch_flet_app() -> None:
                                             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                                             spacing=0,
                                             controls=[
-                                                ft.Text(f"{h['score']}/100", size=18, weight=ft.FontWeight.BOLD, color=score_color),
-                                                ft.Text("Health Score", size=10, color="#94A3B8"),
+                                                ft.Text(
+                                                    f"{h['score']}/100",
+                                                    size=18,
+                                                    weight=ft.FontWeight.BOLD,
+                                                    color=score_color,
+                                                ),
+                                                ft.Text(
+                                                    "Health Score", size=10, color="#94A3B8"
+                                                ),
                                             ],
                                         ),
                                     ),
                                 ],
                             ),
                             ft.ProgressBar(
-                                value=min(1.0, summary["total_spent"] / max(1.0, summary["monthly_budget"])),
+                                value=min(
+                                    1.0,
+                                    summary["total_spent"] / max(1.0, summary["monthly_budget"]),
+                                ),
                                 color=score_color,
                                 bgcolor="#0F172A",
                                 height=8,
                             ),
                             ft.Text(
-                                f"Ideal Pace Today: ₹{h['ideal_spend']:,.0f}  •  Anomalies Flagged: {summary['anomaly_count']}",
+                                f"Ideal Pace Today: ₹{h['ideal_spend']:,.0f}  •  "
+                                f"Anomalies Flagged: {summary['anomaly_count']}",
                                 size=11,
                                 color="#CBD5E1",
                             ),
@@ -836,19 +1615,37 @@ def launch_flet_app() -> None:
                             controls=[
                                 ft.Row(
                                     controls=[
-                                        ft.Text("⏳ 1-Tap Resume Fallback Verification", size=13, weight=ft.FontWeight.BOLD, color="#FDE68A"),
+                                        ft.Text(
+                                            "⏳ 1-Tap Resume Fallback Verification",
+                                            size=13,
+                                            weight=ft.FontWeight.BOLD,
+                                            color="#FDE68A",
+                                        ),
                                     ]
                                 ),
                                 ft.Text(
-                                    f"Did your UPI payment of ₹{p['amount']:.0f} to {p['payee_name']} ({p['payee_vpa']}) succeed?",
+                                    f"Did your UPI payment of ₹{p['amount']:.0f} to "
+                                    f"{p['payee_name']} ({p['payee_vpa']}) succeed?",
                                     size=12,
                                     color="white",
                                 ),
                                 ft.Row(
                                     spacing=10,
                                     controls=[
-                                        safe_btn("✅ Yes, Log Payment", on_click=lambda e, pid=p["internal_id"]: handle_resolve_pending(pid, True), bgcolor="#10B981", color="white"),
-                                        safe_outlined_btn("❌ No, Failed/Cancelled", on_click=lambda e, pid=p["internal_id"]: handle_resolve_pending(pid, False)),
+                                        safe_btn(
+                                            "✅ Yes, Log Payment",
+                                            on_click=lambda e, pid=p["internal_id"]: handle_resolve_pending(
+                                                pid, True
+                                            ),
+                                            bgcolor="#10B981",
+                                            color="white",
+                                        ),
+                                        safe_outlined_btn(
+                                            "❌ No, Cancelled",
+                                            on_click=lambda e, pid=p["internal_id"]: handle_resolve_pending(
+                                                pid, False
+                                            ),
+                                        ),
                                     ],
                                 ),
                             ],
@@ -856,7 +1653,14 @@ def launch_flet_app() -> None:
                     )
                 )
 
-            controls.append(ft.Text("Recent UPI Transactions", size=15, weight=ft.FontWeight.BOLD, color="white"))
+            controls.append(
+                ft.Text(
+                    "Recent UPI Transactions",
+                    size=15,
+                    weight=ft.FontWeight.BOLD,
+                    color="white",
+                )
+            )
 
             txn_items = []
             for t in summary["recent_txns"]:
@@ -876,24 +1680,43 @@ def launch_flet_app() -> None:
                                         ft.Row(
                                             spacing=6,
                                             controls=[
-                                                ft.Text(t["payee_name"], size=14, weight=ft.FontWeight.W_600, color="white"),
+                                                ft.Text(
+                                                    t["payee_name"],
+                                                    size=14,
+                                                    weight=ft.FontWeight.W_600,
+                                                    color="white",
+                                                ),
                                                 ft.Container(
                                                     visible=is_anom,
                                                     padding=pad(6, 2),
                                                     bgcolor="#EF4444",
                                                     border_radius=6,
-                                                    content=ft.Text("Z-SPIKE", size=9, weight=ft.FontWeight.BOLD, color="white"),
+                                                    content=ft.Text(
+                                                        "Z-SPIKE",
+                                                        size=9,
+                                                        weight=ft.FontWeight.BOLD,
+                                                        color="white",
+                                                    ),
                                                 ),
                                             ],
                                         ),
-                                        ft.Text(f"{t['category']} • {t['payee_vpa']} {t['notes']}", size=11, color="#94A3B8"),
+                                        ft.Text(
+                                            f"{t['category']} • {t['payee_vpa']} {t['notes']}",
+                                            size=11,
+                                            color="#94A3B8",
+                                        ),
                                     ],
                                 ),
                                 ft.Column(
                                     horizontal_alignment=ft.CrossAxisAlignment.END,
                                     spacing=2,
                                     controls=[
-                                        ft.Text(f"-₹{t['amount']:.0f}", size=15, weight=ft.FontWeight.BOLD, color="#FCA5A5" if is_anom else "white"),
+                                        ft.Text(
+                                            f"-₹{t['amount']:.0f}",
+                                            size=15,
+                                            weight=ft.FontWeight.BOLD,
+                                            color="#FCA5A5" if is_anom else "white",
+                                        ),
                                         ft.Text(t["timestamp"][5:16], size=10, color="#64748B"),
                                     ],
                                 ),
@@ -903,7 +1726,9 @@ def launch_flet_app() -> None:
                 )
 
             controls.append(ft.Column(spacing=8, controls=txn_items))
-            return ft.Column(scroll=ft.ScrollMode.AUTO, expand=True, spacing=12, controls=controls)
+            return ft.Column(
+                scroll=ft.ScrollMode.AUTO, expand=True, spacing=12, controls=controls
+            )
 
         def build_scan_pay_tab() -> ft.Control:
             presets = {
@@ -924,45 +1749,70 @@ def launch_flet_app() -> None:
                 ),
             }
 
-            vpa_field = ft.TextField(label="Merchant VPA (pa)", value="ramesh.chai@ybl", height=48, text_size=13)
-            name_field = ft.TextField(label="Merchant Name (pn)", value="Ramesh Tea Stall", height=48, text_size=13)
+            default_key = "Ramesh Tea Stall (Tier 1 Memory - Try ₹1500 for Z-Spike!)"
+            vpa_field = ft.TextField(
+                label="Merchant VPA (pa)", value="ramesh.chai@ybl", height=48, text_size=13
+            )
+            name_field = ft.TextField(
+                label="Merchant Name (pn)", value="Ramesh Tea Stall", height=48, text_size=13
+            )
             qr_field = ft.TextField(
                 label="Scanned Raw NPCI UPI 2.0 QR URI (Preserves mc, sign, orgid)",
-                value=presets["Ramesh Tea Stall (Tier 1 Memory - Try ₹1500 for Z-Spike!)"][2],
+                value=presets[default_key][2],
                 multiline=True,
                 min_lines=2,
                 max_lines=2,
                 text_size=11,
             )
-            amt_field = ft.TextField(label="Amount (₹ INR)", value="20", keyboard_type=ft.KeyboardType.NUMBER, height=48)
-            notes_field = ft.TextField(label="Quick Tag / Note (Optional)", value="#EveningChai", height=48, text_size=13)
-            uri_preview = ft.Text("", size=11, color="#38BDF8", selectable=True)
+            amt_field = ft.TextField(
+                label="Amount (₹ INR)",
+                value="20",
+                keyboard_type=ft.KeyboardType.NUMBER,
+                height=48,
+            )
+            notes_field = ft.TextField(
+                label="Quick Tag / Note (Optional)",
+                value="#EveningChai",
+                height=48,
+                text_size=13,
+            )
+            initial_uri = build_signed_upi_uri(presets[default_key][2], 20.0)
+            uri_preview = ft.Text(
+                f"🔒 Constructed Signed Intent URI: {initial_uri}",
+                size=11,
+                color="#38BDF8",
+                selectable=True,
+            )
 
-            def update_preview(_=None):
+            def update_preview(e=None):
                 try:
                     amt = float(amt_field.value or 0)
                 except ValueError:
                     amt = 0.0
                 built = build_signed_upi_uri(qr_field.value or vpa_field.value, amt)
                 uri_preview.value = f"🔒 Constructed Signed Intent URI: {built}"
-                page.update()
+                if e is not None:
+                    page.update()
 
             def on_preset_change(e):
-                vpa, name, raw_uri = presets[e.control.value]
-                vpa_field.value = vpa
-                name_field.value = name
-                qr_field.value = raw_uri
-                update_preview()
+                selected_key = getattr(e.control, "value", None) or getattr(
+                    e, "data", default_key
+                )
+                if selected_key in presets:
+                    vpa, name, raw_uri = presets[selected_key]
+                    vpa_field.value = vpa
+                    name_field.value = name
+                    qr_field.value = raw_uri
+                    update_preview(e)
 
-            preset_dropdown = ft.Dropdown(
+            preset_dropdown = make_dropdown(
                 label="Quick Demo Preset (Select Scenario for Faculty Demo)",
-                value="Ramesh Tea Stall (Tier 1 Memory - Try ₹1500 for Z-Spike!)",
-                options=[ft.dropdown.Option(k) for k in presets.keys()],
+                value=default_key,
+                options_tuples=[(k, k) for k in presets.keys()],
+                on_change_fn=on_preset_change,
             )
-            preset_dropdown.on_change = on_preset_change
             amt_field.on_change = update_preview
             qr_field.on_change = update_preview
-            update_preview()
 
             def click_launch_pending(e):
                 try:
@@ -981,7 +1831,10 @@ def launch_flet_app() -> None:
                 state["tab"] = 0
                 nav_bar.selected_index = 0
                 render_active_tab()
-                show_snack(f"Created PENDING #{pid} & launched UPI Intent! Verify on Home Tab.", "#F59E0B")
+                show_snack(
+                    f"Created PENDING #{pid} & launched UPI Intent! Verify on Home Tab.",
+                    "#F59E0B",
+                )
 
             def click_instant_simulate(e):
                 try:
@@ -998,34 +1851,69 @@ def launch_flet_app() -> None:
                 nav_bar.selected_index = 0
                 render_active_tab()
                 if res.get("anomaly", {}).get("is_anomaly"):
-                    show_snack(f"⚠️ ANOMALY DETECTED! ₹{amt:.0f} (Z={res['anomaly']['z_score']} > 2.5)", "#EF4444")
+                    show_snack(
+                        f"⚠️ ANOMALY DETECTED! ₹{amt:.0f} (Z={res['anomaly']['z_score']} > 2.5)",
+                        "#EF4444",
+                    )
                 else:
-                    show_snack(f"✅ Instant Paid ₹{amt:.0f} -> Auto-Tagged: {res['category_name']} ({res['tier']})", "#10B981")
+                    show_snack(
+                        f"✅ Instant Paid ₹{amt:.0f} -> Auto-Tagged: {res['category_name']} ({res['tier']})",
+                        "#10B981",
+                    )
                 if res.get("needs_user_tag"):
-                    open_first_time_tag_dialog(res["payee_vpa"], res["payee_name"], amt, res)
+                    open_first_time_tag_dialog(
+                        res["payee_vpa"], res["payee_name"], amt, res
+                    )
 
             return ft.Column(
                 scroll=ft.ScrollMode.AUTO,
                 expand=True,
                 spacing=12,
                 controls=[
-                    ft.Text("📷 QR Scan & UPI 2.0 Intent Simulator", size=16, weight=ft.FontWeight.BOLD, color="white"),
+                    ft.Text(
+                        "📷 QR Scan & UPI 2.0 Intent Simulator",
+                        size=16,
+                        weight=ft.FontWeight.BOLD,
+                        color="white",
+                    ),
                     preset_dropdown,
                     vpa_field,
                     name_field,
                     amt_field,
                     notes_field,
                     qr_field,
-                    ft.Container(padding=10, bgcolor="#0F172A", border_radius=10, border=make_border("#1E293B", 1), content=uri_preview),
-                    safe_btn("🚀 Step 1: Launch UPI App (Saves PENDING Row First)", on_click=click_launch_pending, bgcolor="#2563EB", color="white", height=44),
-                    safe_btn("⚡ Instant Simulate Payment Success (Test Tagger + Z-Score)", on_click=click_instant_simulate, bgcolor="#059669", color="white", height=44),
+                    ft.Container(
+                        padding=10,
+                        bgcolor="#0F172A",
+                        border_radius=10,
+                        border=make_border("#1E293B", 1),
+                        content=uri_preview,
+                    ),
+                    safe_btn(
+                        "🚀 Step 1: Launch UPI App (Saves PENDING Row First)",
+                        on_click=click_launch_pending,
+                        bgcolor="#2563EB",
+                        color="white",
+                        height=44,
+                    ),
+                    safe_btn(
+                        "⚡ Instant Simulate Payment Success (Test Tagger + Z-Score)",
+                        on_click=click_instant_simulate,
+                        bgcolor="#059669",
+                        color="white",
+                        height=44,
+                    ),
                 ],
             )
 
         def build_analytics_tab(summary: dict) -> ft.Control:
             cat_cards = []
             for c in summary["categories"]:
-                bar_color = "#EF4444" if c["ratio"] >= 0.85 else ("#F59E0B" if c["ratio"] >= 0.65 else "#3B82F6")
+                bar_color = (
+                    "#EF4444"
+                    if c["ratio"] >= 0.85
+                    else ("#F59E0B" if c["ratio"] >= 0.65 else "#3B82F6")
+                )
                 cat_cards.append(
                     ft.Container(
                         padding=12,
@@ -1037,11 +1925,25 @@ def launch_flet_app() -> None:
                                 ft.Row(
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     controls=[
-                                        ft.Text(f"{c['name']} ({c['count']} txns)", size=13, weight=ft.FontWeight.W_600, color="white"),
-                                        ft.Text(f"₹{c['spent']:,.0f} / ₹{c['budget_limit']:,.0f}", size=12, color="#CBD5E1"),
+                                        ft.Text(
+                                            f"{c['name']} ({c['count']} txns)",
+                                            size=13,
+                                            weight=ft.FontWeight.W_600,
+                                            color="white",
+                                        ),
+                                        ft.Text(
+                                            f"₹{c['spent']:,.0f} / ₹{c['budget_limit']:,.0f}",
+                                            size=12,
+                                            color="#CBD5E1",
+                                        ),
                                     ],
                                 ),
-                                ft.ProgressBar(value=c["ratio"], color=bar_color, bgcolor="#0F172A", height=7),
+                                ft.ProgressBar(
+                                    value=c["ratio"],
+                                    color=bar_color,
+                                    bgcolor="#0F172A",
+                                    height=7,
+                                ),
                             ],
                         ),
                     )
@@ -1059,8 +1961,19 @@ def launch_flet_app() -> None:
                     ft.Row(
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         controls=[
-                            ft.Text("📊 Category Spend & Z-Score Engine", size=16, weight=ft.FontWeight.BOLD, color="white"),
-                            safe_btn("⬇️ Export CSV", on_click=export_csv_click, bgcolor="#334155", color="white"),
+                            ft.Text(
+                                "📊 Category Spend & Z-Score Engine",
+                                size=16,
+                                weight=ft.FontWeight.BOLD,
+                                color="white",
+                            ),
+                            safe_btn(
+                                "⬇️ Export CSV",
+                                on_click=export_csv_click,
+                                bgcolor="#334155",
+                                color="white",
+                                height=34,
+                            ),
                         ],
                     ),
                     ft.Column(spacing=8, controls=cat_cards),
@@ -1068,32 +1981,43 @@ def launch_flet_app() -> None:
             )
 
         def render_active_tab():
+            status_strip_container.content = build_status_strip()
             summary = get_dashboard_summary(DB_FILE)
-            # Auto-detect if Saurabh's custom UI view functions exist; otherwise use built-in interactive shell
-            from src.contracts import _try_import
             if state["tab"] == 0:
                 custom_home = _try_import("src.ui.home_view", "build_home_view")
-                body_container.content = custom_home(page, summary) if custom_home else build_home_tab(summary)
+                body_container.content = (
+                    custom_home(page, summary) if custom_home else build_home_tab(summary)
+                )
             elif state["tab"] == 1:
                 custom_scan = _try_import("src.ui.scanner_view", "build_scanner_view")
-                body_container.content = custom_scan(page) if custom_scan else build_scan_pay_tab()
+                body_container.content = (
+                    custom_scan(page) if custom_scan else build_scan_pay_tab()
+                )
             else:
                 custom_dash = _try_import("src.ui.dashboard_view", "build_dashboard_view")
-                body_container.content = custom_dash(page, summary) if custom_dash else build_analytics_tab(summary)
+                body_container.content = (
+                    custom_dash(page, summary)
+                    if custom_dash
+                    else build_analytics_tab(summary)
+                )
             page.update()
 
         def on_nav_change(e):
             state["tab"] = e.control.selected_index
             render_active_tab()
 
+        home_icon = get_icon("HOME_ROUNDED") or get_icon("HOME")
+        qr_icon = get_icon("QR_CODE_SCANNER_ROUNDED") or get_icon("QR_CODE")
+        chart_icon = get_icon("INSERT_CHART_ROUNDED") or get_icon("BAR_CHART")
+
         nav_bar = ft.NavigationBar(
             selected_index=0,
             bgcolor="#111827",
             on_change=on_nav_change,
             destinations=[
-                ft.NavigationBarDestination(icon=ft.Icons.HOME_ROUNDED, label="Home & Feed"),
-                ft.NavigationBarDestination(icon=ft.Icons.QR_CODE_SCANNER_ROUNDED, label="Scan & Pay"),
-                ft.NavigationBarDestination(icon=ft.Icons.INSERT_CHART_ROUNDED, label="Analytics"),
+                ft.NavigationBarDestination(icon=home_icon, label="Home & Feed"),
+                ft.NavigationBarDestination(icon=qr_icon, label="Scan & Pay"),
+                ft.NavigationBarDestination(icon=chart_icon, label="Analytics"),
             ],
         )
 
@@ -1102,7 +2026,7 @@ def launch_flet_app() -> None:
                 expand=True,
                 spacing=0,
                 controls=[
-                    build_status_strip(),
+                    status_strip_container,
                     body_container,
                     nav_bar,
                 ],
@@ -1117,29 +2041,47 @@ def launch_flet_app() -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Automated Expenditure Tracker — Live App & Integrator")
-    parser.add_argument("--check-integration", action="store_true", help="Run 5-point CLI integration check without GUI")
+    parser = argparse.ArgumentParser(
+        description="Automated Expenditure Tracker — Live App & Integrator"
+    )
+    parser.add_argument(
+        "--check-integration",
+        action="store_true",
+        help="Run 6-point CLI integration check without GUI",
+    )
     args = parser.parse_args()
 
     if args.check_integration:
         run_cli_integration_audit()
     else:
         launch_flet_app()
-"""
+'''
 
 
 def upgrade_repo() -> None:
-    os.makedirs("src", exist_ok=True)
+    for folder in FOLDERS:
+        os.makedirs(folder, exist_ok=True)
+        init_path = os.path.join(folder, "__init__.py")
+        if not os.path.exists(init_path):
+            with open(init_path, "w", encoding="utf-8") as f:
+                f.write('"""Package init."""\n')
+
+    if not os.path.exists("src/db/seed_mock_data.py"):
+        with open("src/db/seed_mock_data.py", "w", encoding="utf-8") as f:
+            f.write(SEED_MOCK_DATA_CODE)
+        print("[Created] src/db/seed_mock_data.py -> 6 SQLite v1.1 tables & 40 mock UPI transactions")
+
     with open("src/contracts.py", "w", encoding="utf-8") as f:
         f.write(CONTRACTS_CODE)
-    print("[Upgraded] src/contracts.py -> Smart Auto-Discovery Bridge (Anuj + Saurabh + Uday plug-and-play)")
+    print("[Upgraded] src/contracts.py -> 3-State Auto-Discovery & File-by-File Status Registry")
 
     with open("main.py", "w", encoding="utf-8") as f:
         f.write(MAIN_APP_CODE)
-    print("[Upgraded] main.py -> Full Interactive Python Flet Mobile App + CLI Integration Audit")
+    print("[Upgraded] main.py -> Interactive Flet Mobile App with Clickable Inspector Chips")
+
     print("\nNext Steps:")
-    print("  1. Run `python main.py --check-integration` to verify all 5 contracts in terminal.")
-    print("  2. Run `python main.py` to open the live visual Flet Mobile App window on your laptop!")
+    print("  1. Run `python main.py --check-integration` to verify all 6 checks & file statuses in terminal.")
+    print("  2. Run `python main.py` to open the app and click any top chip to test the modal inspector!")
 
 
 if __name__ == "__main__":

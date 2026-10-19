@@ -4,7 +4,7 @@ Owned by: Sumit Kushwaha (Project Lead & Integrator)
 Purpose:
 - Guarantees the app is 100% runnable and visually demoable from Day 1.
 - Automatically detects and wires in Anuj's, Saurabh's, and Uday's modules as soon
-  as their Pull Requests are merged into `dev`.
+  as their Pull Requests are merged into `dev` (or created on a local branch).
 """
 
 import csv
@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import statistics
+import sys
 import time
 from datetime import datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -34,47 +35,226 @@ CATEGORY_ID_TO_NAME = {cid: name for cid, name, _, _, _ in DEFAULT_CATEGORIES}
 
 # Pre-compiled Tier 2 Regex patterns (Baseline until Uday's src/analytics/tagger.py is merged)
 COMPILED_REGEX_RULES = [
-    (1, "Food & Dining", re.compile(r"zomato|swiggy|dominos|kfc|haldiram|bikaner|chai|tea|snack|canteen|cafe|bakery|restaurant|food", re.IGNORECASE)),
-    (2, "Travel", re.compile(r"uber|ola|rapido|irctc|metro|redbus|rail|cab|auto", re.IGNORECASE)),
-    (3, "Groceries", re.compile(r"blinkit|zepto|instamart|bigbasket|dmart|kirana|grocery|supermart|mart", re.IGNORECASE)),
-    (4, "Fuel", re.compile(r"hpcl|bpcl|iocl|indian oil|petrol|fuel|shell|pump", re.IGNORECASE)),
-    (5, "Utilities", re.compile(r"jio|airtel|vi|bsnl|uppcl|bescom|electricity|recharge|broadband|water|gas", re.IGNORECASE)),
+    (
+        1,
+        "Food & Dining",
+        re.compile(
+            r"zomato|swiggy|dominos|kfc|haldiram|bikaner|chai|tea|snack|canteen|cafe|bakery|restaurant|food",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        2,
+        "Travel",
+        re.compile(r"uber|ola|rapido|irctc|metro|redbus|rail|cab|auto", re.IGNORECASE),
+    ),
+    (
+        3,
+        "Groceries",
+        re.compile(
+            r"blinkit|zepto|instamart|bigbasket|dmart|kirana|grocery|supermart|mart",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        4,
+        "Fuel",
+        re.compile(r"hpcl|bpcl|iocl|indian oil|petrol|fuel|shell|pump", re.IGNORECASE),
+    ),
+    (
+        5,
+        "Utilities",
+        re.compile(
+            r"jio|airtel|vi|bsnl|uppcl|bescom|electricity|recharge|broadband|water|gas",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 
 def _try_import(module_path: str, func_name: str):
-    """Safely attempts to load a teammate's function if their file exists."""
+    """Safely loads a teammate's function if their file exists on the active branch."""
     try:
-        mod = importlib.import_module(module_path)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        rel_file = module_path.replace(".", os.sep) + ".py"
+        full_path = os.path.join(project_root, rel_file)
+
+        # If file does not exist on the current Git branch, clear stale cache and fallback
+        if not os.path.isfile(full_path):
+            sys.modules.pop(module_path, None)
+            return None
+
+        importlib.invalidate_caches()
+        if module_path in sys.modules:
+            mod = importlib.reload(sys.modules[module_path])
+        else:
+            mod = importlib.import_module(module_path)
         return getattr(mod, func_name, None)
     except Exception:
         return None
 
 
-def get_integration_status() -> dict[str, dict[str, str]]:
-    """Returns live auto-discovery status for Anuj, Saurabh, and Uday modules."""
+def get_integration_status() -> dict:
+    """Returns live auto-discovery status with 3-state progress and file breakdown."""
+    # 1. Anuj (Backend & DB — 3 files)
+    anuj_upi = (
+        _try_import("src.backend.upi_bridge", "build_signed_upi_uri") is not None
+        or _try_import("src.backend.upi_bridge", "launch_upi_intent") is not None
+    )
     anuj_db = _try_import("src.db.database", "init_db") is not None
-    anuj_upi = _try_import("src.backend.upi_bridge", "build_signed_upi_uri") is not None or _try_import("src.backend.upi_bridge", "launch_upi_intent") is not None
-    uday_tagger = _try_import("src.analytics.tagger", "categorize_transaction") is not None
-    uday_anom = _try_import("src.analytics.anomaly", "detect_spending_anomaly") is not None
-    saurabh_home = _try_import("src.ui.home_view", "build_home_view") is not None
+    anuj_sec = (
+        _try_import("src.backend.security", "encrypt_db") is not None
+        or _try_import("src.backend.security", "init_sqlcipher") is not None
+    )
+
+    anuj_files = [
+        {
+            "path": "src/backend/upi_bridge.py",
+            "task": "S0-03 / S1-02: Signed UPI 2.0 URI Builder",
+            "is_live": anuj_upi,
+            "desc": "NPCI signed QR query preserver (mc, sign, orgid)",
+        },
+        {
+            "path": "src/db/database.py",
+            "task": "S1-01 / S2-04: SQLite v1.1 Database Engine",
+            "is_live": anuj_db,
+            "desc": "6 relational tables & pending state resolver",
+        },
+        {
+            "path": "src/backend/security.py",
+            "task": "S4-01: SQLCipher & Biometric App Lock",
+            "is_live": anuj_sec,
+            "desc": "256-bit DB encryption & Android Keystore",
+        },
+    ]
+
+    # 2. Saurabh (Frontend Flet UI — 4 files)
     saurabh_dash = _try_import("src.ui.dashboard_view", "build_dashboard_view") is not None
+    saurabh_home = _try_import("src.ui.home_view", "build_home_view") is not None
+    saurabh_scan = _try_import("src.ui.scanner_view", "build_scanner_view") is not None
+    saurabh_pop = (
+        _try_import("src.ui.popups", "show_first_time_tag_dialog") is not None
+        or _try_import("src.ui.popups", "show_fallback_popup") is not None
+    )
+
+    saurabh_files = [
+        {
+            "path": "src/ui/dashboard_view.py",
+            "task": "S0-04 / S3-01: Flet Dark Dashboard & Charts",
+            "is_live": saurabh_dash,
+            "desc": "Visual spending breakdown & health gauge",
+        },
+        {
+            "path": "src/ui/home_view.py",
+            "task": "S1-03: Home Feed & Monthly Budget Card",
+            "is_live": saurabh_home,
+            "desc": "Live transaction feed & budget progress bar",
+        },
+        {
+            "path": "src/ui/scanner_view.py",
+            "task": "S1-03: QR Scan & UPI Intent Simulator",
+            "is_live": saurabh_scan,
+            "desc": "Camera scanner view & payment trigger",
+        },
+        {
+            "path": "src/ui/popups.py",
+            "task": "S1-04 / S2-03: 1-Tap Fallback & Tag Dialogs",
+            "is_live": saurabh_pop,
+            "desc": "Resume verification popup & merchant tagger",
+        },
+    ]
+
+    # 3. Uday (Data Analytics — 4 files)
+    uday_tag = _try_import("src.analytics.tagger", "categorize_transaction") is not None
+    uday_anom = _try_import("src.analytics.anomaly", "detect_spending_anomaly") is not None
+    uday_health = _try_import("src.analytics.health_score", "calculate_health_score") is not None
+    uday_exp = _try_import("src.analytics.exporter", "export_transactions_csv") is not None
+
+    uday_files = [
+        {
+            "path": "src/analytics/tagger.py",
+            "task": "S0-05 / S2-01: 3-Tier Categorization Engine",
+            "is_live": uday_tag,
+            "desc": "Tier 1 Memory + Tier 2 Regex + Tier 3 Unknown",
+        },
+        {
+            "path": "src/analytics/anomaly.py",
+            "task": "S2-02: Safe Z-Score Anomaly Math",
+            "is_live": uday_anom,
+            "desc": "Statistics guard (stdev==0 & spike Z>2.5)",
+        },
+        {
+            "path": "src/analytics/health_score.py",
+            "task": "S2-02: Financial Health Score 0-100",
+            "is_live": uday_health,
+            "desc": "Dynamic pace & anomaly-adjusted health gauge",
+        },
+        {
+            "path": "src/analytics/exporter.py",
+            "task": "S3-02: Offline CSV Report Exporter",
+            "is_live": uday_exp,
+            "desc": "Pure-Python standard library CSV generator",
+        },
+    ]
+
+    def calc_module_state(name: str, files: list) -> dict:
+        live_cnt = sum(1 for f in files if f["is_live"])
+        total_cnt = len(files)
+        if live_cnt == 0:
+            return {
+                "mode": "BUILT-IN FALLBACK",
+                "badge": f"🟡 {name}: 0/{total_cnt} Built-in",
+                "color": "#F59E0B",
+                "bg": "#1E293B",
+                "border": "#475569",
+                "text_color": "#CBD5E1",
+                "state": "BUILTIN",
+                "live_count": live_cnt,
+                "total_count": total_cnt,
+                "files": files,
+            }
+        elif live_cnt < total_cnt:
+            return {
+                "mode": "PARTIAL MODULE",
+                "badge": f"🔵 {name}: {live_cnt}/{total_cnt} Partial",
+                "color": "#38BDF8",
+                "bg": "#0C4A6E",
+                "border": "#0284C7",
+                "text_color": "#BAE6FD",
+                "state": "PARTIAL",
+                "live_count": live_cnt,
+                "total_count": total_cnt,
+                "files": files,
+            }
+        else:
+            return {
+                "mode": "100% LIVE MODULE",
+                "badge": f"🟢 {name}: {total_cnt}/{total_cnt} LIVE",
+                "color": "#10B981",
+                "bg": "#064E3B",
+                "border": "#10B981",
+                "text_color": "#A7F3D0",
+                "state": "LIVE",
+                "live_count": live_cnt,
+                "total_count": total_cnt,
+                "files": files,
+            }
 
     return {
         "backend_anuj": {
             "owner": "Anuj Kushwaha",
-            "mode": "LIVE MODULE" if (anuj_db or anuj_upi) else "BUILT-IN FALLBACK",
-            "details": f"database.py: {'LIVE' if anuj_db else 'Fallback'} | upi_bridge.py: {'LIVE' if anuj_upi else 'Fallback'}",
+            "role": "Backend & Database",
+            **calc_module_state("Anuj", anuj_files),
         },
         "frontend_saurabh": {
             "owner": "Saurabh Yadav",
-            "mode": "LIVE MODULE" if (saurabh_home or saurabh_dash) else "BUILT-IN FALLBACK",
-            "details": f"home_view.py: {'LIVE' if saurabh_home else 'Fallback'} | dashboard_view.py: {'LIVE' if saurabh_dash else 'Fallback'}",
+            "role": "Frontend Flet UI",
+            **calc_module_state("Saurabh", saurabh_files),
         },
         "analytics_uday": {
             "owner": "Uday Paswan",
-            "mode": "LIVE MODULE" if (uday_tagger or uday_anom) else "BUILT-IN FALLBACK",
-            "details": f"tagger.py: {'LIVE' if uday_tagger else 'Fallback'} | anomaly.py: {'LIVE' if uday_anom else 'Fallback'}",
+            "role": "Data Analytics & ML",
+            **calc_module_state("Uday", uday_files),
         },
     }
 
@@ -83,9 +263,9 @@ def ensure_db_ready(db_path: str = DB_FILE) -> None:
     custom_init = _try_import("src.db.database", "init_db")
     if custom_init is not None:
         try:
-            custom_init()
-        except TypeError:
             custom_init(db_path)
+        except TypeError:
+            custom_init()
     if not os.path.exists(db_path):
         seed_mock_database(db_path)
 
@@ -94,7 +274,10 @@ def build_signed_upi_uri(raw_qr_uri: str, amount: float) -> str:
     """Preserves NPCI UPI 2.0 signed parameters (mc, sign, orgid) while injecting am & cu=INR."""
     custom_fn = _try_import("src.backend.upi_bridge", "build_signed_upi_uri")
     if custom_fn is not None:
-        return custom_fn(raw_qr_uri, amount)
+        try:
+            return str(custom_fn(raw_qr_uri, amount))
+        except Exception:
+            pass
 
     if not raw_qr_uri.startswith("upi://pay"):
         raw_qr_uri = f"upi://pay?pa={raw_qr_uri}&pn=Merchant"
@@ -127,7 +310,12 @@ def categorize_transaction(payee_vpa: str, payee_name: str, db_path: str = DB_FI
     custom_fn = _try_import("src.analytics.tagger", "categorize_transaction")
     if custom_fn is not None:
         try:
-            return custom_fn(payee_vpa, payee_name)
+            return custom_fn(payee_vpa, payee_name, db_path=db_path)
+        except TypeError:
+            try:
+                return custom_fn(payee_vpa, payee_name)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -138,7 +326,8 @@ def categorize_transaction(payee_vpa: str, payee_name: str, db_path: str = DB_FI
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        "SELECT m.category_id, c.name, m.confidence FROM merchant_tags m JOIN categories c ON m.category_id = c.category_id WHERE LOWER(m.vpa_pattern) = ?;",
+        "SELECT m.category_id, c.name, m.confidence FROM merchant_tags m "
+        "JOIN categories c ON m.category_id = c.category_id WHERE LOWER(m.vpa_pattern) = ?;",
         (vpa_clean,),
     )
     row = cur.fetchone()
@@ -176,6 +365,20 @@ def categorize_transaction(payee_vpa: str, payee_name: str, db_path: str = DB_FI
 
 def save_merchant_tag(payee_vpa: str, category_id: int, db_path: str = DB_FILE) -> None:
     """Saves a first-time merchant VPA mapping so future payments auto-categorize in Tier 1."""
+    custom_fn = _try_import("src.db.database", "save_merchant_tag")
+    if custom_fn is not None:
+        try:
+            custom_fn(payee_vpa, category_id, db_path=db_path)
+            return
+        except TypeError:
+            try:
+                custom_fn(payee_vpa, category_id)
+                return
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
@@ -191,7 +394,12 @@ def detect_spending_anomaly(category_id: int, new_amount: float, db_path: str = 
     custom_fn = _try_import("src.analytics.anomaly", "detect_spending_anomaly")
     if custom_fn is not None:
         try:
-            return custom_fn(category_id, new_amount)
+            return custom_fn(category_id, new_amount, db_path=db_path)
+        except TypeError:
+            try:
+                return custom_fn(category_id, new_amount)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -224,7 +432,11 @@ def detect_spending_anomaly(category_id: int, new_amount: float, db_path: str = 
             "z_score": 9.99 if is_anom else 0.0,
             "mean": round(mean_val, 2),
             "stdev": 0.0,
-            "reason": "Zero-variance guard triggered (>2x mean & +₹100)" if is_anom else "Zero-variance normal",
+            "reason": (
+                "Zero-variance guard triggered (>2x mean & +₹100)"
+                if is_anom
+                else "Zero-variance normal"
+            ),
         }
 
     z_score = diff / stdev_val
@@ -249,7 +461,13 @@ def calculate_health_score(
     custom_fn = _try_import("src.analytics.health_score", "calculate_health_score")
     if custom_fn is not None:
         try:
-            return custom_fn(monthly_budget, spent_this_month, day_of_month or datetime.now().day, days_in_month, anomaly_count)
+            return custom_fn(
+                monthly_budget,
+                spent_this_month,
+                day_of_month or datetime.now().day,
+                days_in_month,
+                anomaly_count,
+            )
         except Exception:
             pass
 
@@ -270,16 +488,31 @@ def calculate_health_score(
     }
 
 
-def create_pending_txn(amount: float, payee_vpa: str, payee_name: str, raw_qr_uri: str, db_path: str = DB_FILE) -> int:
+def create_pending_txn(
+    amount: float,
+    payee_vpa: str,
+    payee_name: str,
+    raw_qr_uri: str,
+    db_path: str = DB_FILE,
+) -> int:
     """Logs a PENDING state row BEFORE launching any external UPI app intent."""
     custom_fn = _try_import("src.db.database", "create_pending_txn")
     if custom_fn is not None:
-        return int(custom_fn(amount, payee_vpa, payee_name, raw_qr_uri))
+        try:
+            return int(custom_fn(amount, payee_vpa, payee_name, raw_qr_uri, db_path=db_path))
+        except TypeError:
+            try:
+                return int(custom_fn(amount, payee_vpa, payee_name, raw_qr_uri))
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO pending_transactions (amount, payee_vpa, payee_name, raw_qr_uri, status) VALUES (?, ?, ?, ?, 'PENDING');",
+        "INSERT INTO pending_transactions (amount, payee_vpa, payee_name, raw_qr_uri, status) "
+        "VALUES (?, ?, ?, ?, 'PENDING');",
         (float(amount), payee_vpa.strip(), payee_name.strip(), raw_qr_uri),
     )
     internal_id = int(cur.lastrowid)
@@ -292,12 +525,21 @@ def get_unresolved_pending(db_path: str = DB_FILE) -> list[dict]:
     """Fetches all unresolved PENDING transactions for the 1-Tap Resume Fallback Popup."""
     custom_fn = _try_import("src.db.database", "get_unresolved_pending")
     if custom_fn is not None:
-        return custom_fn()
+        try:
+            return custom_fn(db_path=db_path)
+        except TypeError:
+            try:
+                return custom_fn()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        "SELECT internal_id, amount, payee_vpa, payee_name, raw_qr_uri, init_time FROM pending_transactions WHERE status = 'PENDING' ORDER BY internal_id DESC;"
+        "SELECT internal_id, amount, payee_vpa, payee_name, raw_qr_uri, init_time "
+        "FROM pending_transactions WHERE status = 'PENDING' ORDER BY internal_id DESC;"
     )
     rows = cur.fetchall()
     conn.close()
@@ -323,6 +565,22 @@ def resolve_pending_txn(
     db_path: str = DB_FILE,
 ) -> dict:
     """Resolves a specific pending transaction via WHERE internal_id = ? and runs Tagger + Z-Score."""
+    custom_fn = _try_import("src.db.database", "resolve_pending_txn")
+    if custom_fn is not None:
+        try:
+            res = custom_fn(
+                internal_id=internal_id,
+                confirmed=confirmed,
+                category_id=category_id,
+                notes=notes,
+                txn_id=txn_id,
+                db_path=db_path,
+            )
+            if isinstance(res, dict) and "status" in res:
+                return res
+        except Exception:
+            pass
+
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
@@ -337,7 +595,10 @@ def resolve_pending_txn(
     amount, payee_vpa, payee_name = float(row[0]), str(row[1]), str(row[2])
 
     if not confirmed:
-        cur.execute("UPDATE pending_transactions SET status = 'CANCELLED' WHERE internal_id = ?;", (int(internal_id),))
+        cur.execute(
+            "UPDATE pending_transactions SET status = 'CANCELLED' WHERE internal_id = ?;",
+            (int(internal_id),),
+        )
         conn.commit()
         conn.close()
         return {"status": "CANCELLED", "internal_id": internal_id}
@@ -352,7 +613,8 @@ def resolve_pending_txn(
         (int(internal_id),),
     )
     cur.execute(
-        "INSERT INTO transactions (txn_id, amount, payee_vpa, payee_name, timestamp, category_id, is_anomaly, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        "INSERT INTO transactions (txn_id, amount, payee_vpa, payee_name, timestamp, category_id, is_anomaly, notes) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         (
             final_txn_id,
             amount,
@@ -391,13 +653,17 @@ def get_dashboard_summary(db_path: str = DB_FILE) -> dict:
     user_name = u_row[0] if u_row else "Sumit Kushwaha"
     monthly_budget = float(u_row[1]) if u_row else 12000.0
 
-    cur.execute("SELECT COALESCE(SUM(amount), 0.0), COALESCE(SUM(CASE WHEN is_anomaly=1 THEN 1 ELSE 0 END), 0) FROM transactions;")
+    cur.execute(
+        "SELECT COALESCE(SUM(amount), 0.0), "
+        "COALESCE(SUM(CASE WHEN is_anomaly=1 THEN 1 ELSE 0 END), 0) FROM transactions;"
+    )
     tot_row = cur.fetchone()
     total_spent = float(tot_row[0])
     anomaly_count = int(tot_row[1])
 
     cur.execute(
-        """SELECT c.category_id, c.name, COALESCE(c.budget_limit, 2000.0), COALESCE(SUM(t.amount), 0.0), COUNT(t.txn_id)
+        """SELECT c.category_id, c.name, COALESCE(c.budget_limit, 2000.0),
+                  COALESCE(SUM(t.amount), 0.0), COUNT(t.txn_id)
            FROM categories c
            LEFT JOIN transactions t ON c.category_id = t.category_id
            GROUP BY c.category_id, c.name, c.budget_limit
@@ -416,7 +682,8 @@ def get_dashboard_summary(db_path: str = DB_FILE) -> dict:
     ]
 
     cur.execute(
-        """SELECT t.txn_id, t.amount, t.payee_vpa, t.payee_name, t.timestamp, COALESCE(c.name, 'Uncategorized'), t.is_anomaly, COALESCE(t.notes, '')
+        """SELECT t.txn_id, t.amount, t.payee_vpa, t.payee_name, t.timestamp,
+                  COALESCE(c.name, 'Uncategorized'), t.is_anomaly, COALESCE(t.notes, '')
            FROM transactions t
            LEFT JOIN categories c ON t.category_id = c.category_id
            ORDER BY t.timestamp DESC LIMIT 15;"""
@@ -449,16 +716,27 @@ def get_dashboard_summary(db_path: str = DB_FILE) -> dict:
     }
 
 
-def export_transactions_csv(output_file: str = "expenditure_report_export.csv", db_path: str = DB_FILE) -> str:
+def export_transactions_csv(
+    output_file: str = "expenditure_report_export.csv", db_path: str = DB_FILE
+) -> str:
     """Exports all logged transactions to a clean offline CSV file using Python's built-in csv module."""
     custom_fn = _try_import("src.analytics.exporter", "export_transactions_csv")
     if custom_fn is not None:
-        return str(custom_fn(output_file))
+        try:
+            return str(custom_fn(output_file, db_path=db_path))
+        except TypeError:
+            try:
+                return str(custom_fn(output_file))
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        """SELECT t.txn_id, t.timestamp, t.payee_name, t.payee_vpa, t.amount, COALESCE(c.name, 'Uncategorized'), t.is_anomaly, COALESCE(t.notes, '')
+        """SELECT t.txn_id, t.timestamp, t.payee_name, t.payee_vpa, t.amount,
+                  COALESCE(c.name, 'Uncategorized'), t.is_anomaly, COALESCE(t.notes, '')
            FROM transactions t
            LEFT JOIN categories c ON t.category_id = c.category_id
            ORDER BY t.timestamp DESC;"""
@@ -468,6 +746,17 @@ def export_transactions_csv(output_file: str = "expenditure_report_export.csv", 
 
     with open(output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Transaction_ID", "Timestamp", "Payee_Name", "Payee_VPA", "Amount_INR", "Category", "Is_Anomaly", "Notes"])
+        writer.writerow(
+            [
+                "Transaction_ID",
+                "Timestamp",
+                "Payee_Name",
+                "Payee_VPA",
+                "Amount_INR",
+                "Category",
+                "Is_Anomaly",
+                "Notes",
+            ]
+        )
         writer.writerows(rows)
     return os.path.abspath(output_file)
