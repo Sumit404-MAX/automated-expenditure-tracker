@@ -66,6 +66,19 @@ def run_cli_integration_audit() -> None:
     h = summary["health"]
     print(f" [PASS] Check 4 (Health Score): Spent ₹{summary['total_spent']} / ₹{summary['monthly_budget']} -> Score {h['score']}/100 ({h['status']})")
     print(f" [PASS] Check 5 (Pending Queue): {len(summary['pending_list'])} unresolved PENDING item(s) ready for 1-Tap Resume Popup.")
+
+    # Check 6 (Priority Upgrade 2): Zero Forbidden Heavy Imports Scan across src/
+    forbidden = ("pandas", "numpy", "scipy", "sklearn", "matplotlib", "plotly")
+    for root, _, files in os.walk("src"):
+        for fn in files:
+            if fn.endswith(".py"):
+                fpath = os.path.join(root, fn)
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as src_f:
+                    content = src_f.read()
+                for bad in forbidden:
+                    if f"import {bad}" in content or f"from {bad}" in content:
+                        raise AssertionError(f"Forbidden library '{bad}' detected in {fpath}! Use pure Python stdlib only.")
+    print(" [PASS] Check 6 (Lean Stack Guardrail): Zero forbidden imports (pandas/numpy/matplotlib) in src/.")
     print("=" * 72)
     print(" [READY FOR DEMO] Run `python main.py` to launch the interactive Flet mobile app!")
 
