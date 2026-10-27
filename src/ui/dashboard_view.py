@@ -1,5 +1,5 @@
 """
-Saurabh Yadav (Frontend UI) — Task S0-04
+Saurabh Yadav (Frontend UI) — Task S0-04 (Stage 5 Post-Merge Hotfix: fix/s0-04-dashboard-keys)
 Flet 0.80+ / 1.0+ Dark-Mode Analytics Dashboard View (src/ui/dashboard_view.py)
 Plugs into the 3-Tab Bottom Navigation Shell (Home / Scan & Pay / Analytics) in main.py.
 """
@@ -17,13 +17,13 @@ def _pad(left: float = 0, top: float = 0, right: float = 0, bottom: float = 0) -
     return ft.Padding(left=left, top=top, right=right, bottom=bottom)
 
 
-def _border(color: str = "#334155", width: float = 1.0) -> ft.Border:
+def _border(color: str = "#0C6AEE", width: float = 1.0) -> ft.Border:
     """Flet 1.0+/0.80+ compatible 4-sided border helper using ft.Border and ft.BorderSide."""
     side = ft.BorderSide(width, color)
     return ft.Border(left=side, top=side, right=side, bottom=side)
 
 
-def _safe_btn(label: str, on_click_handler, bgcolor: str = "#2563EB") -> ft.Container:
+def _safe_btn(label: str, on_click_handler, bgcolor: str = "#42598C") -> ft.Container:
     """Flet 1.0+/0.80+ compatible button built with ft.Container."""
     return ft.Container(
         content=ft.Text(label, size=12, weight=ft.FontWeight.W_600, color="#FFFFFF"),
@@ -42,9 +42,15 @@ def build_dashboard_view(page: ft.Page, summary: dict) -> ft.Control:
     """
     if not isinstance(summary, dict):
         summary = {}
-    categories = summary.get("categories") or summary.get("category_breakdown") or []
-    total_spent = float(summary.get("total_spent", 0.0))
-    monthly_budget = float(summary.get("monthly_budget", 15000.0))
+
+    categories = summary.get("category_breakdown") or summary.get("categories") or []
+    raw_total_spent = (
+        summary.get("spent_this_month")
+        if summary.get("spent_this_month") is not None
+        else summary.get("total_spent", 0.0)
+    )
+    total_spent = float(raw_total_spent or 0.0)
+    monthly_budget = float(summary.get("monthly_budget") or 12000.0)
 
     def on_export_click(e):
         out_path = export_transactions_csv("expenditure_export.csv")
@@ -63,9 +69,14 @@ def build_dashboard_view(page: ft.Page, summary: dict) -> ft.Control:
     category_cards = []
     for cat in categories:
         name = cat.get("name") or cat.get("category_name") or "Uncategorized"
-        count = int(cat.get("count") or cat.get("txn_count") or 0)
-        spent = float(cat.get("spent") or cat.get("total_spent") or 0.0)
-        limit = float(cat.get("budget_limit") or 1.0)
+        raw_count = cat.get("count") if cat.get("count") is not None else cat.get("txn_count")
+        title_label = f"{name} ({int(raw_count)} txns)" if raw_count is not None else str(name)
+        spent = float(
+            cat.get("spent")
+            if cat.get("spent") is not None
+            else (cat.get("total_spent") or 0.0)
+        )
+        limit = float(cat.get("limit") or cat.get("budget_limit") or 1.0)
         ratio = float(cat.get("ratio", spent / max(1.0, limit)))
         clamped_ratio = max(0.0, min(1.0, ratio))
 
@@ -81,7 +92,7 @@ def build_dashboard_view(page: ft.Page, summary: dict) -> ft.Control:
 
         card = ft.Container(
             bgcolor="#1E293B",
-            border=_border("#334155", 1.0),
+            border=_border("#334155",1.0),
             border_radius=12,
             padding=_pad(left=14, top=12, right=14, bottom=12),
             content=ft.Column(
@@ -91,7 +102,7 @@ def build_dashboard_view(page: ft.Page, summary: dict) -> ft.Control:
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         controls=[
                             ft.Text(
-                                f"{name} ({count} txns)",
+                                title_label,
                                 size=14,
                                 weight=ft.FontWeight.BOLD,
                                 color="#F8FAFC",
@@ -147,66 +158,108 @@ def build_dashboard_view(page: ft.Page, summary: dict) -> ft.Control:
             )
         )
 
-    return ft.Column(
-        spacing=12,
-        scroll=ft.ScrollMode.AUTO,
-        controls=[
-            ft.Container(
-                bgcolor="#0F172A",
-                border=_border("#10B981", 1.0),
-                border_radius=10,
-                padding=_pad(left=12, top=8, right=12, bottom=8),
-                content=ft.Row(
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+    controls_list = [
+        ft.Container(
+            bgcolor="#0F172A",
+            border=_border("#10B981", 1.0),
+            border_radius=10,
+            padding=_pad(left=12, top=8, right=12, bottom=8),
+            content=ft.Row(
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                controls=[
+                    ft.Text(
+                        "[LIVE MODULE] Saurabh Yadav — Flet 0.80+ Analytics UI",
+                        size=11,
+                        weight=ft.FontWeight.BOLD,
+                        color="#10B981",
+                    ),
+                    ft.Text(
+                        f"Total: Rs.{total_spent:,.0f} / Rs.{monthly_budget:,.0f}",
+                        size=11,
+                        color="#94A3B8",
+                    ),
+                ],
+            ),
+        ),
+        ft.Row(
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[
+                ft.Column(
+                    spacing=2,
                     controls=[
                         ft.Text(
-                            "[LIVE MODULE] Saurabh Yadav — Flet 0.80+ Analytics UI",
-                            size=11,
+                            "Category Spend Breakdown",
+                            size=16,
                             weight=ft.FontWeight.BOLD,
-                            color="#10B981",
+                            color="#F8FAFC",
                         ),
                         ft.Text(
-                            f"Total: Rs.{total_spent:,.0f} / Rs.{monthly_budget:,.0f}",
+                            "30-day SQLite v1.1 category utilization & pace",
                             size=11,
                             color="#94A3B8",
                         ),
                     ],
                 ),
-            ),
-            ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[
-                    ft.Column(
-                        spacing=2,
-                        controls=[
-                            ft.Text(
-                                "Category Spend Breakdown",
-                                size=16,
-                                weight=ft.FontWeight.BOLD,
-                                color="#F8FAFC",
-                            ),
-                            ft.Text(
-                                "30-day SQLite v1.1 category utilization & pace",
-                                size=11,
-                                color="#94A3B8",
-                            ),
-                        ],
-                    ),
-                    _safe_btn("Export CSV", on_export_click, bgcolor="#2563EB"),
-                ],
-            ),
-            *category_cards,
-        ],
-    )
+                _safe_btn("Export CSV", on_export_click, bgcolor="#2563EB"),
+            ],
+        ),
+        *category_cards,
+    ]
+
+    root_padding = _pad(left=14, top=14, right=14, bottom=14)
+    try:
+        root_col = ft.Column(
+            spacing=12,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            padding=root_padding,
+            controls=controls_list,
+        )
+    except TypeError:
+        root_col = ft.Column(
+            spacing=12,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            controls=controls_list,
+        )
+        root_col.padding = root_padding
+
+    return root_col
 
 
 if __name__ == "__main__":
     ensure_db_ready()
     mock_summary = get_dashboard_summary()
+    assert isinstance(mock_summary, dict), "get_dashboard_summary() must return a dict"
+    assert float(mock_summary.get("spent_this_month", 0.0)) > 0.0, (
+        "Expected non-zero spent_this_month from tracker_dev.db"
+    )
+    assert float(mock_summary.get("monthly_budget", 0.0)) > 0.0, (
+        "Expected non-zero monthly_budget from tracker_dev.db"
+    )
+    cats = mock_summary.get("category_breakdown") or []
+    assert len(cats) >= 5, f"Expected at least 5 categories in category_breakdown, got {len(cats)}"
+    assert all(float(c.get("limit") or 0.0) > 1.0 for c in cats), (
+        "Every category in category_breakdown must have a real budget limit > Rs.1"
+    )
+    assert any(float(c.get("spent") or 0.0) > 0.0 for c in cats), (
+        "At least one category must have non-zero spent amount"
+    )
+
     ctrl = build_dashboard_view(None, mock_summary)
     assert isinstance(ctrl, ft.Control), "build_dashboard_view must return an ft.Control"
     assert isinstance(ctrl, ft.Column), "Dashboard root control must be an ft.Column"
+    assert ctrl.expand is True, "Dashboard root ft.Column must set expand=True"
+    assert getattr(ctrl, "padding", None) is not None, "Dashboard root ft.Column must have 14px padding"
+    assert len(ctrl.controls) >= 2 + len(cats), (
+        "Dashboard Column must render status banner, header row, and all category cards"
+    )
+
     empty_ctrl = build_dashboard_view(None, {})
     assert isinstance(empty_ctrl, ft.Control), "Empty summary fallback failed"
-    print("[PASS] Saurabh S0-04 Flet 0.80+ Dashboard View Unit Test Verified!")
+    print(
+        f"[PASS] Saurabh S0-04 Flet 0.80+ Dashboard View Unit Test Verified! "
+        f"(Spent: Rs.{mock_summary['spent_this_month']:,.0f} / "
+        f"Budget: Rs.{mock_summary['monthly_budget']:,.0f}, Categories: {len(cats)})"
+    )
